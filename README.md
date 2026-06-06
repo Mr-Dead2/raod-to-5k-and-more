@@ -32,9 +32,14 @@ pre-configured for all of them.
    publish `dist`). Click **Deploy**.
 4. After ~1 minute you get a link like `https://<random-name>.netlify.app`.
 
-> Cloudflare Pages and Vercel work the same way — import the repo, deploy. They
-> auto-detect the Vite settings (Cloudflare: build command `npm run build`,
-> output `dist`).
+> **Vercel** works the same way — import the repo and deploy; `vercel.json`
+> handles the settings.
+>
+> **Cloudflare** now deploys through *Workers*. A `wrangler.jsonc` in this repo
+> tells it to serve the built `./dist` folder as a static site. When you connect
+> the repo, set **Build command:** `npm run build` and leave the deploy command
+> at its default (`npx wrangler deploy`). You'll get a `…​.workers.dev` /
+> `…​.pages.dev` link.
 
 ### Option B — GitHub Pages
 

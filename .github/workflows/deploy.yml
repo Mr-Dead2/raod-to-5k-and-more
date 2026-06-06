@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - run: npm run icons
       - run: npm run build
+        env:
+          BASE_PATH: /raod-to-5k-and-more/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

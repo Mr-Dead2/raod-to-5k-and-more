@@ -2,13 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
-// Where the app is served from depends on the host:
-//  - GitHub Pages serves it under /<repo-name>/.
-//  - Netlify / Vercel / Cloudflare Pages serve it from the root "/".
-// We auto-detect those hosts (they set these env vars during their build) so it
-// "just works" on whichever you pick. Override manually with BASE_PATH if needed.
-const onRootHost = process.env.NETLIFY || process.env.VERCEL || process.env.CF_PAGES;
-const base = process.env.BASE_PATH || (onRootHost ? "/" : "/raod-to-5k-and-more/");
+// Default to serving from the site root "/", which is what Cloudflare, Netlify,
+// Vercel and local preview all use. GitHub Pages is the exception (it serves
+// under /<repo-name>/), so its Actions workflow sets BASE_PATH explicitly.
+const base = process.env.BASE_PATH || "/";
 
 export default defineConfig({
   base,
