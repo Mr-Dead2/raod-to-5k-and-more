@@ -1,19 +1,50 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { WEEKS, FLAT, TOTAL, C, typeColor } from "./data.js";
-import { loadLog, saveLog } from "./storage.js";
-import { WeeklyBars, CumulativeArea } from "./components/Charts.jsx";
+import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
+import { WeeklyBars, CumulativeArea, StreakGrid } from "./components/Charts.jsx";
+import { BottomNav } from "./components/BottomNav.jsx";
+import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
+import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
   enableReminders, disableReminders, showReminderNow, syncMessage,
   startForegroundScheduler,
 } from "./notifications.js";
 
-const pace = (min, km) => {
+const DAY = 86400000;
+const paceSec = (min, km) => {
   const m = parseFloat(min), k = parseFloat(km);
-  if (!m || !k) return null;
-  const s = (m * 60) / k;
-  return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  if (!m || !k) return 0;
+  return (m * 60) / k;
 };
+const fmtPace = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : null);
+
+const startOfDay = (iso) => { const d = new Date(iso + "T00:00:00"); d.setHours(0, 0, 0, 0); return d; };
+const todayIndexOf = (iso) => {
+  if (!iso) return -1;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  return Math.round((now - startOfDay(iso)) / DAY);
+};
+const dateForDay = (iso, i) => { const d = startOfDay(iso); d.setDate(d.getDate() + i); return d; };
+
+// Smoothly animate a number toward its target for that satisfying count-up feel.
+function useCountUp(target, ms = 650) {
+  const [v, setV] = useState(target);
+  const prev = useRef(target);
+  useEffect(() => {
+    const from = prev.current, to = target, start = performance.now();
+    let raf;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / ms);
+      const e = 1 - Math.pow(1 - t, 3);
+      setV(from + (to - from) * e);
+      if (t < 1) raf = requestAnimationFrame(tick); else prev.current = to;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return v;
+}
 
 export default function App() {
   const [log, setLog] = useState({});
@@ -21,6 +52,8 @@ export default function App() {
   const [open, setOpen] = useState(null);
   const [tab, setTab] = useState("plan"); // plan | stats | history
   const [tipsOpen, setTipsOpen] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [toast, setToast] = useState(null);
 
   // reminders
   const [remOn, setRemOn] = useState(false);
@@ -37,6 +70,7 @@ export default function App() {
 
   useEffect(() => {
     setLog(loadLog());
+    setStartDate(loadSettings().startDate || "");
     setLoaded(true);
     (async () => {
       const r = await loadReminder();
@@ -46,7 +80,6 @@ export default function App() {
     if (notificationsSupported()) setPerm(permission());
   }, []);
 
-  // capture Android's "add to home screen" prompt
   useEffect(() => {
     const h = (e) => { e.preventDefault(); setInstallEvt(e); };
     window.addEventListener("beforeinstallprompt", h);
@@ -62,31 +95,51 @@ export default function App() {
   }, [swRun]);
 
   const persist = (next) => { setLog(next); saveLog(next); };
+
   const update = (key, patch) => {
     const cur = log[key] || {};
+    const wasDone = !!cur.done;
     const next = { ...cur, ...patch };
-    // stamp the completion date the first time a day is marked done (for history/charts)
     if (patch.done && !cur.done && !next.date) next.date = new Date().toISOString();
-    persist({ ...log, [key]: next });
+    const merged = { ...log, [key]: next };
+    persist(merged);
+
+    // celebrate newly completed sessions
+    if (patch.done && !wasDone) {
+      const total = FLAT.filter((f) => merged[f.key] && merged[f.key].done).length;
+      const wk = Number(key.match(/^w(\d+)d/)[1]);
+      const days = WEEKS.find((w) => w.n === wk).days;
+      const weekDone = days.every((_, i) => merged[`w${wk}d${i}`] && merged[`w${wk}d${i}`].done);
+      if (total >= TOTAL) { haptic([20, 40, 60]); confetti({ count: 170, spread: 1.5 }); }
+      else if (weekDone) { haptic([15, 30, 15]); confetti({ count: 120, spread: 1.2 }); }
+      else { haptic(15); confetti({ count: 70 }); }
+    } else if (patch.done === false) {
+      haptic(8);
+    }
   };
-  const reset = () => { persist({}); setOpen(null); };
+
+  const reset = () => { persist({}); setOpen(null); haptic(10); };
+
+  const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
   const stats = useMemo(() => {
-    let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0;
+    let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
     FLAT.forEach((f) => {
       const e = log[f.key];
       if (!e) return;
       if (e.done) done++;
       const k = parseFloat(e.km);
-      if (!isNaN(k)) { kmLogged += k; if (k > 0) runsLogged++; }
+      if (!isNaN(k)) { kmLogged += k; if (k > 0) { runsLogged++; maxKm = Math.max(maxKm, k); if (!e.stitch) stitchlessRuns++; } }
       if (e.stitch) stitches++;
+      const ps = paceSec(e.min, e.km);
+      if (ps && (bestPaceSec === 0 || ps < bestPaceSec)) bestPaceSec = ps;
     });
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
-    return { kmLogged, done, stitches, runsLogged, best };
+    const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
+    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks };
   }, [log]);
 
-  // chart + history data
   const weekly = useMemo(() => WEEKS.map((w) => {
     let value = 0, target = 0;
     w.days.forEach((day, di) => {
@@ -98,80 +151,95 @@ export default function App() {
     return { label: w.n, value, target };
   }), [log]);
 
+  const todayIdx = todayIndexOf(startDate);
+
+  const cells = useMemo(() => FLAT.map((f, i) => ({
+    done: !!(log[f.key] && log[f.key].done),
+    type: f.type,
+    isToday: i === todayIdx,
+    isPast: startDate && i < todayIdx,
+    label: startDate ? dateForDay(startDate, i).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : f.d,
+  })), [log, startDate, todayIdx]);
+
   const history = useMemo(() => {
     const items = FLAT.map((f) => ({ ...f, e: log[f.key] || {} }))
       .filter((f) => f.e.done || parseFloat(f.e.km) > 0);
-    items.sort((a, b) => {
-      const da = a.e.date || "", db = b.e.date || "";
-      if (da && db) return db.localeCompare(da);
-      return 0;
-    });
+    items.sort((a, b) => (b.e.date || "").localeCompare(a.e.date || ""));
     return items;
   }, [log]);
 
   const cumulative = useMemo(() => {
-    const runs = history
-      .filter((h) => parseFloat(h.e.km) > 0)
-      .slice()
+    const runs = history.filter((h) => parseFloat(h.e.km) > 0).slice()
       .sort((a, b) => (a.e.date || "").localeCompare(b.e.date || ""));
     let total = 0;
     return runs.map((r) => { total += parseFloat(r.e.km); return { total }; });
   }, [history]);
 
+  const unlocked = useMemo(() => unlockedIds(stats), [stats]);
+
+  // achievement unlock toast
+  const prevUnlocked = useRef(null);
+  useEffect(() => {
+    if (!loaded) return;
+    if (prevUnlocked.current === null) { prevUnlocked.current = unlocked; return; }
+    const fresh = ACHIEVEMENTS.find((a) => unlocked.has(a.id) && !prevUnlocked.current.has(a.id));
+    if (fresh) { setToast(fresh); haptic([10, 30, 10]); }
+    prevUnlocked.current = unlocked;
+  }, [unlocked, loaded]);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3400); return () => clearTimeout(t); }, [toast]);
+
   const pct = Math.round((stats.done / TOTAL) * 100);
+  const pctShown = Math.round(useCountUp(pct));
+  const kmShown = useCountUp(stats.kmLogged);
   const nextUp = FLAT.find((f) => !(log[f.key] && log[f.key].done));
 
-  // keep the background reminder message in sync with today's session
   const msg = nextUp ? `Today: Week ${nextUp.week} · ${nextUp.d} · ${nextUp.title} — ${nextUp.detail}` : "You finished the plan — go enjoy a victory run! 🎖️";
   const msgRef = useRef(msg);
   msgRef.current = msg;
   useEffect(() => { if (remOn) syncMessage(msg); }, [msg, remOn]);
 
-  // foreground reminder scheduler (fires if app is open at reminder time)
   useEffect(() => {
     const stop = startForegroundScheduler(() => msgRef.current);
     return stop;
   }, []);
 
   const toggleReminder = async () => {
-    if (remOn) {
-      await disableReminders();
-      setRemOn(false);
-    } else {
+    haptic(10);
+    if (remOn) { await disableReminders(); setRemOn(false); }
+    else {
       const ok = await enableReminders(remTime, msgRef.current);
-      setRemOn(ok);
-      setPerm(permission());
+      setRemOn(ok); setPerm(permission());
       if (ok) showReminderNow(`Reminders on — I'll nudge you around ${remTime} ✅`);
     }
   };
-  const changeTime = async (t) => {
-    setRemTime(t);
-    if (remOn) await saveReminder({ time: t });
-  };
-  const doInstall = async () => {
-    if (!installEvt) return;
-    installEvt.prompt();
-    await installEvt.userChoice;
-    setInstallEvt(null);
-  };
+  const changeTime = async (t) => { setRemTime(t); if (remOn) await saveReminder({ time: t }); };
+  const doInstall = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; setInstallEvt(null); };
 
-  const fmt = (ms) => {
-    const s = Math.floor(ms / 1000), m = Math.floor(s / 60);
-    return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  };
+  const fmt = (ms) => { const s = Math.floor(ms / 1000), m = Math.floor(s / 60); return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
 
   const R = 46, CIRC = 2 * Math.PI * R;
 
+  // header schedule eyebrow / countdown
+  let eyebrow = "4-WEEK MISSION", countdown = null;
+  if (startDate) {
+    if (todayIdx < 0) eyebrow = `STARTS IN ${-todayIdx} DAY${-todayIdx === 1 ? "" : "S"}`;
+    else if (todayIdx >= TOTAL) eyebrow = "PLAN COMPLETE 🎖️";
+    else {
+      eyebrow = `DAY ${todayIdx + 1} OF ${TOTAL}`;
+      const toGoal = TOTAL - 1 - todayIdx;
+      countdown = toGoal > 0 ? `${toGoal} days to your 5K` : "Race day is today! 🏁";
+    }
+  }
+
   const Stat = ({ label, value, sub, color }) => (
-    <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
+    <div className="card tap" style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
       <div className="num" style={{ fontSize: 26, fontWeight: 800, color: color || C.text, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, marginTop: 6, fontWeight: 600 }}>{label}</div>
       {sub && <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sub}</div>}
     </div>
   );
-
   const Card = ({ children, style }) => (
-    <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, ...style }}>{children}</div>
+    <div className="card" style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, ...style }}>{children}</div>
   );
 
   return (
@@ -179,61 +247,71 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        button { font-family: inherit; }
         .syne { font-family: 'Syne', sans-serif; }
         .num { font-family: 'Syne', sans-serif; font-variant-numeric: tabular-nums; }
         input { font-family: 'Manrope', sans-serif; }
-        .row { transition: background .15s ease, border-color .15s ease; }
-        .glow { box-shadow: 0 0 0 1px ${C.accent}, 0 0 22px -6px ${C.accent}; }
+        .row, .card { transition: background .15s ease, border-color .15s ease, transform .12s ease, box-shadow .2s ease; }
+        .tap { cursor: pointer; }
+        .tap:active { transform: scale(.97); }
+        .glow { box-shadow: 0 0 0 1px ${C.accent}, 0 0 26px -6px ${C.accent}; }
         @keyframes rise { from { opacity:0; transform: translateY(8px) } to { opacity:1; transform:none } }
+        @keyframes pop { 0%{ transform:scale(.6) } 60%{ transform:scale(1.18) } 100%{ transform:scale(1) } }
+        @keyframes toastIn { from{ opacity:0; transform: translate(-50%, -16px) } to{ opacity:1; transform: translate(-50%,0) } }
         .rise { animation: rise .3s ease both; }
+        .pop { animation: pop .32s ease; }
         .inp { background:${C.bg}; border:1px solid ${C.line}; color:${C.text}; border-radius:10px; padding:9px 11px; width:100%; font-size:14px; font-weight:600; outline:none; }
         .inp:focus { border-color:${C.accent}; }
-        .chip { cursor:pointer; border-radius:999px; padding:7px 13px; font-size:12px; font-weight:700; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; }
+        .chip { cursor:pointer; border-radius:999px; padding:7px 13px; font-size:12px; font-weight:700; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; transition: transform .12s ease; }
+        .chip:active { transform: scale(.96); }
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
       `}</style>
 
-      <div style={{ maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px 70px" }}>
+      {/* Achievement toast */}
+      {toast && (
+        <div style={{ position: "fixed", top: "calc(14px + env(safe-area-inset-top))", left: "50%", transform: "translateX(-50%)", zIndex: 9998, animation: "toastIn .3s ease both", width: "calc(100% - 32px)", maxWidth: 380 }}>
+          <div className="glow" style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 14, padding: "12px 14px" }}>
+            <span style={{ fontSize: 26 }}>{toast.icon}</span>
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>ACHIEVEMENT UNLOCKED</div>
+              <div className="syne" style={{ fontSize: 15, fontWeight: 800 }}>{toast.title}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: C.accent, fontWeight: 700 }}>4-WEEK MISSION</div>
+            <div style={{ fontSize: 10, letterSpacing: 3, color: C.accent, fontWeight: 700 }}>{eyebrow}</div>
             <h1 className="syne" style={{ fontSize: 30, fontWeight: 800, margin: "2px 0 0", letterSpacing: -0.5 }}>ROAD TO 5K</h1>
+            {countdown && <div style={{ fontSize: 12, color: C.dim, marginTop: 3, fontWeight: 600 }}>{countdown}</div>}
           </div>
           <div style={{ position: "relative", width: 108, height: 108 }}>
             <svg width="108" height="108" style={{ transform: "rotate(-90deg)" }}>
               <circle cx="54" cy="54" r={R} fill="none" stroke={C.surface2} strokeWidth="9" />
               <circle cx="54" cy="54" r={R} fill="none" stroke={C.accent} strokeWidth="9" strokeLinecap="round"
-                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pct / 100)} style={{ transition: "stroke-dashoffset .5s ease" }} />
+                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease" }} />
             </svg>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <span className="num" style={{ fontSize: 24, fontWeight: 800 }}>{pct}%</span>
+              <span className="num" style={{ fontSize: 24, fontWeight: 800 }}>{pctShown}%</span>
               <span style={{ fontSize: 9, color: C.dim, letterSpacing: 1 }}>{stats.done}/{TOTAL} DAYS</span>
             </div>
           </div>
         </div>
 
-        {/* Install banner */}
         {installEvt && (
           <button onClick={doInstall} className="chip" style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.accent, color: C.bg, border: "none", fontSize: 13 }}>
             ⬇ Install Road to 5K on your phone
           </button>
         )}
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {["plan", "stats", "history"].map((t) => (
-            <button key={t} onClick={() => setTab(t)} className="chip"
-              style={{ flex: 1, padding: "10px 0", background: tab === t ? C.accent : C.surface, color: tab === t ? C.bg : C.dim, border: "none", textTransform: "uppercase", letterSpacing: 1 }}>
-              {t}
-            </button>
-          ))}
-        </div>
-
         {tab === "stats" && (
           <div className="rise">
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="KM LOGGED" value={stats.kmLogged.toFixed(1)} color={C.accent} />
+              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} />
               <Stat label="BEST STREAK" value={stats.best} sub="days in a row" />
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -241,14 +319,59 @@ export default function App() {
               <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} />
             </div>
 
+            {/* Personal bests */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>PERSONAL BESTS</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <PB label="FASTEST" value={fmtPace(stats.bestPaceSec) || "—"} unit="/km" />
+                <PB label="LONGEST" value={stats.maxKm ? stats.maxKm : "—"} unit={stats.maxKm ? "km" : ""} />
+                <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1)} unit="km" />
+              </div>
+            </Card>
+
+            {/* Schedule / today */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 6 }}>PLAN SCHEDULE</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>I started on</span>
+                <input className="inp" type="date" value={startDate} onChange={(e) => saveStart(e.target.value)} style={{ width: "auto" }} />
+              </div>
+              {startDate && (
+                <div style={{ marginTop: 14 }}>
+                  <StreakGrid cells={cells} />
+                </div>
+              )}
+              {!startDate && <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Set this to light up today's session and a day-by-day calendar.</div>}
+            </Card>
+
             {/* Charts */}
             <Card style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>KM PER WEEK · LOGGED VS PLAN</div>
               <WeeklyBars data={weekly} />
             </Card>
-            <Card style={{ marginBottom: 16 }}>
+            <Card style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>CUMULATIVE DISTANCE</div>
               <CumulativeArea points={cumulative} />
+            </Card>
+
+            {/* Achievements */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>ACHIEVEMENTS</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: C.accent, fontWeight: 700 }}>{unlocked.size}/{ACHIEVEMENTS.length}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {ACHIEVEMENTS.map((a) => {
+                  const got = unlocked.has(a.id);
+                  return (
+                    <div key={a.id} title={`${a.title} — ${a.desc}`}
+                      style={{ textAlign: "center", padding: "10px 4px", borderRadius: 12, background: got ? C.surface2 : "transparent", border: `1px solid ${got ? C.line : "transparent"}`, opacity: got ? 1 : 0.4 }}>
+                      <div style={{ fontSize: 24, filter: got ? "none" : "grayscale(1)" }}>{a.icon}</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 4, lineHeight: 1.2 }}>{a.title}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </Card>
 
             {/* Reminders */}
@@ -268,14 +391,10 @@ export default function App() {
                   <input className="inp" type="time" value={remTime} onChange={(e) => changeTime(e.target.value)} style={{ width: "auto" }} />
                 </div>
               )}
-              {!notificationsSupported() && (
-                <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>
-              )}
-              {notificationsSupported() && perm === "denied" && (
-                <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>
-              )}
+              {!notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>}
+              {notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>}
               <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
-                Tip: install the app (Add to Home Screen) for the most reliable reminders. The web can't guarantee an exact alarm when fully closed, but it'll catch up next time the app wakes.
+                Tip: install the app (Add to Home Screen) for the most reliable reminders.
               </div>
             </Card>
 
@@ -284,11 +403,11 @@ export default function App() {
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>RUN STOPWATCH</div>
               <div className="num" style={{ fontSize: 52, fontWeight: 800, margin: "6px 0 12px", color: swRun ? C.accent : C.text }}>{fmt(swMs)}</div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button onClick={() => setSwRun((r) => !r)} className="chip"
+                <button onClick={() => { setSwRun((r) => !r); haptic(10); }} className="chip"
                   style={{ background: swRun ? C.warn : C.accent, color: C.bg, border: "none", padding: "11px 26px", fontSize: 14 }}>
                   {swRun ? "PAUSE" : swMs ? "RESUME" : "START"}
                 </button>
-                <button onClick={() => { setSwRun(false); setSwMs(0); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>RESET</button>
+                <button onClick={() => { setSwRun(false); setSwMs(0); haptic(8); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>RESET</button>
               </div>
             </Card>
           </div>
@@ -303,11 +422,11 @@ export default function App() {
               </Card>
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
-                {history.map((h) => {
-                  const p = pace(h.e.min, h.e.km);
+                {history.map((h, idx) => {
+                  const p = fmtPace(paceSec(h.e.min, h.e.km));
                   const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
                   return (
-                    <Card key={h.key} style={{ padding: "12px 14px" }}>
+                    <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <div style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: typeColor(h.type) }} />
                         <div style={{ flex: 1 }}>
@@ -317,9 +436,7 @@ export default function App() {
                         </div>
                         <div style={{ textAlign: "right" }}>
                           {parseFloat(h.e.km) > 0 && <div className="num" style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{parseFloat(h.e.km)} km</div>}
-                          <div style={{ fontSize: 11, color: C.dim }}>
-                            {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}
-                          </div>
+                          <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH 😣</div>}
                         </div>
                       </div>
@@ -333,6 +450,12 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
+            {!startDate && (
+              <button onClick={() => { setTab("stats"); haptic(8); }} className="chip"
+                style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.surface, color: C.text, fontSize: 13 }}>
+                📅 Add your start date to highlight today's run
+              </button>
+            )}
             {/* Next up */}
             {nextUp ? (
               <div className="glow" style={{ background: C.surface, borderRadius: 16, padding: 16, marginBottom: 18 }}>
@@ -347,8 +470,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Tips */}
-            <button onClick={() => setTipsOpen((o) => !o)} className="chip"
+            <button onClick={() => { setTipsOpen((o) => !o); haptic(6); }} className="chip"
               style={{ width: "100%", textAlign: "left", padding: "12px 14px", marginBottom: 16, background: C.surface, color: C.text, fontSize: 13 }}>
               {tipsOpen ? "▾" : "▸"} Beat the side stitch
             </button>
@@ -361,7 +483,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Weeks */}
             {WEEKS.map((w) => {
               const wDone = w.days.filter((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done).length;
               return (
@@ -376,11 +497,14 @@ export default function App() {
                       const key = `w${w.n}d${di}`;
                       const e = log[key] || {};
                       const isOpen = open === key;
+                      const flatIdx = (w.n - 1) * 7 + di;
+                      const isToday = flatIdx === todayIdx;
                       return (
                         <div key={di}>
-                          <div className="row" onClick={() => setOpen(isOpen ? null : key)}
-                            style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${e.done ? typeColor(day.type) : C.line}`, borderRadius: isOpen ? "12px 12px 0 0" : 12, padding: "11px 13px", cursor: "pointer" }}>
+                          <div className="row tap" onClick={() => { setOpen(isOpen ? null : key); haptic(5); }}
+                            style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${isToday ? C.accent : e.done ? typeColor(day.type) : C.line}`, borderRadius: isOpen ? "12px 12px 0 0" : 12, padding: "11px 13px", boxShadow: isToday ? `0 0 18px -8px ${C.accent}` : "none" }}>
                             <button onClick={(ev) => { ev.stopPropagation(); update(key, { done: !e.done }); }}
+                              className={e.done ? "pop" : ""}
                               style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `2px solid ${e.done ? typeColor(day.type) : C.line}`, background: e.done ? typeColor(day.type) : "transparent", color: C.bg, fontWeight: 900, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               {e.done ? "✓" : ""}
                             </button>
@@ -389,9 +513,8 @@ export default function App() {
                               <div className="syne" style={{ fontSize: 16, fontWeight: 700, textDecoration: e.done ? "line-through" : "none", color: e.done ? C.dim : C.text }}>{day.title}</div>
                               <div style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{day.detail}</div>
                             </div>
-                            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: typeColor(day.type) }}>
-                              {day.type.toUpperCase()}
-                            </span>
+                            {isToday && <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.accent, padding: "3px 6px", borderRadius: 6 }}>TODAY</span>}
+                            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: typeColor(day.type) }}>{day.type.toUpperCase()}</span>
                           </div>
 
                           {isOpen && (
@@ -406,8 +529,8 @@ export default function App() {
                                   <input className="inp" type="number" inputMode="numeric" placeholder="—" value={e.min ?? ""} onChange={(ev) => update(key, { min: ev.target.value })} />
                                 </div>
                               </div>
-                              {pace(e.min, e.km) && (
-                                <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 10 }}>Pace: {pace(e.min, e.km)} / km</div>
+                              {fmtPace(paceSec(e.min, e.km)) && (
+                                <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 10 }}>Pace: {fmtPace(paceSec(e.min, e.km))} / km</div>
                               )}
                               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
                                 <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Side stitch hit?</span>
@@ -436,6 +559,17 @@ export default function App() {
 
         {!loaded && <div style={{ fontSize: 11, color: C.dim, marginTop: 12 }}>loading…</div>}
       </div>
+
+      <BottomNav tab={tab} onChange={(t) => { setTab(t); setOpen(null); haptic(6); }} />
+    </div>
+  );
+}
+
+function PB({ label, value, unit }) {
+  return (
+    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 12, padding: "10px 6px" }}>
+      <div className="num" style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{value}<span style={{ fontSize: 11, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
+      <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 4, fontWeight: 700 }}>{label}</div>
     </div>
   );
 }

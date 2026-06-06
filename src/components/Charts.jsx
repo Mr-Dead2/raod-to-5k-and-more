@@ -1,5 +1,39 @@
 import React from "react";
-import { C } from "../data.js";
+import { C, typeColor } from "../data.js";
+
+// 4×7 calendar grid of the plan. Each cell reflects a day's status.
+export function StreakGrid({ cells }) {
+  const rows = [0, 1, 2, 3];
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {rows.map((r) => (
+        <div key={r} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 22, fontSize: 9, fontWeight: 700, color: C.dim }}>W{r + 1}</span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, flex: 1 }}>
+            {cells.slice(r * 7, r * 7 + 7).map((c, i) => {
+              let bg = C.surface2, border = "transparent", content = null;
+              if (c.done) { bg = typeColor(c.type); }
+              else if (c.isToday) { border = C.accent; }
+              else if (c.isPast) { bg = C.bg; border = C.warn; }
+              return (
+                <div key={i} title={c.label}
+                  style={{
+                    aspectRatio: "1", borderRadius: 7, background: bg,
+                    border: `1.5px solid ${border}`, display: "flex",
+                    alignItems: "center", justifyContent: "center",
+                    boxShadow: c.isToday ? `0 0 10px -2px ${C.accent}` : "none",
+                  }}>
+                  {c.done && <span style={{ color: C.bg, fontSize: 11, fontWeight: 900 }}>✓</span>}
+                  {!c.done && c.isToday && <span style={{ width: 5, height: 5, borderRadius: 9, background: C.accent }} />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Weekly km bars: filled bar = logged, faint bar behind = plan target.
 export function WeeklyBars({ data }) {
