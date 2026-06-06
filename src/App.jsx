@@ -1,60 +1,34 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { WEEKS, FLAT, TOTAL, C, typeColor } from "./data.js";
+import { loadLog, saveLog } from "./storage.js";
+import { WeeklyBars, CumulativeArea } from "./components/Charts.jsx";
+import {
+  notificationsSupported, permission, loadReminder, saveReminder,
+  enableReminders, disableReminders, showReminderNow, syncMessage,
+  startForegroundScheduler,
+} from "./notifications.js";
 
-const WEEKS = [
-  { n: 1, label: "Foundation", days: [
-    { d: "MON", type: "run", title: "4 km", detail: "Run 6 min / walk 1 min", km: 4 },
-    { d: "TUE", type: "easy", title: "Easy 2–3 km", detail: "Slow jog or 30 min walk", km: 2.5 },
-    { d: "WED", type: "run", title: "4.5 km", detail: "Run 6 / walk 1", km: 4.5 },
-    { d: "THU", type: "easy", title: "Easy 2–3 km", detail: "Slow jog or walk", km: 2.5 },
-    { d: "FRI", type: "run", title: "5 km", detail: "Run 6 / walk 1 — first 5 km!", km: 5 },
-    { d: "SAT", type: "rest", title: "Walk or rest", detail: "30 min walk, or full rest", km: 0 },
-    { d: "SUN", type: "run", title: "4 km", detail: "Easy continuous", km: 4 },
-  ]},
-  { n: 2, label: "Extend", days: [
-    { d: "MON", type: "run", title: "5 km", detail: "Run 8 / walk 1", km: 5 },
-    { d: "TUE", type: "easy", title: "Easy 3 km", detail: "Slow jog", km: 3 },
-    { d: "WED", type: "run", title: "4 km", detail: "Continuous, no walking", km: 4 },
-    { d: "THU", type: "easy", title: "Easy 2–3 km", detail: "Jog or walk", km: 2.5 },
-    { d: "FRI", type: "run", title: "5 km", detail: "Run 10 / walk 1", km: 5 },
-    { d: "SAT", type: "rest", title: "Walk or rest", detail: "Keep it light", km: 0 },
-    { d: "SUN", type: "run", title: "5 km", detail: "Only 1–2 walk breaks", km: 5 },
-  ]},
-  { n: 3, label: "Hit 5 km", days: [
-    { d: "MON", type: "run", title: "5 km", detail: "Attempt continuous", km: 5 },
-    { d: "TUE", type: "easy", title: "Easy 3 km", detail: "Slow jog", km: 3 },
-    { d: "WED", type: "run", title: "4 km", detail: "Continuous, relaxed", km: 4 },
-    { d: "THU", type: "rest", title: "Walk or rest", detail: "Recover", km: 0 },
-    { d: "FRI", type: "run", title: "5 km", detail: "Continuous 🎉", km: 5 },
-    { d: "SAT", type: "easy", title: "Easy walk", detail: "Loose legs", km: 2 },
-    { d: "SUN", type: "run", title: "5 km", detail: "Continuous, comfortable", km: 5 },
-  ]},
-  { n: 4, label: "Lock it in", days: [
-    { d: "MON", type: "run", title: "5 km", detail: "Easy continuous", km: 5 },
-    { d: "TUE", type: "easy", title: "Easy 3 km", detail: "Jog", km: 3 },
-    { d: "WED", type: "run", title: "5 km", detail: "Steady", km: 5 },
-    { d: "THU", type: "rest", title: "Walk or rest", detail: "Recover", km: 0 },
-    { d: "FRI", type: "run", title: "5 km", detail: "Easy", km: 5 },
-    { d: "SAT", type: "rest", title: "Rest", detail: "Full rest", km: 0 },
-    { d: "SUN", type: "rest", title: "Rest", detail: "Arrive fresh!", km: 0 },
-  ]},
-];
-
-const FLAT = WEEKS.flatMap((w) => w.days.map((day, di) => ({ ...day, key: `w${w.n}d${di}`, week: w.n })));
-const TOTAL = FLAT.length;
-
-const C = {
-  bg: "#0c0d10", surface: "#15171c", surface2: "#1b1e25", line: "#2a2e38",
-  text: "#f1f3ee", dim: "#878d99", accent: "#ccff33", run: "#ccff33",
-  easy: "#43e0c4", rest: "#5a6170", warn: "#ff6a3d",
+const pace = (min, km) => {
+  const m = parseFloat(min), k = parseFloat(km);
+  if (!m || !k) return null;
+  const s = (m * 60) / k;
+  return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 };
-const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
 
 export default function App() {
   const [log, setLog] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(null);
-  const [tab, setTab] = useState("plan"); // plan | stats
+  const [tab, setTab] = useState("plan"); // plan | stats | history
   const [tipsOpen, setTipsOpen] = useState(false);
+
+  // reminders
+  const [remOn, setRemOn] = useState(false);
+  const [remTime, setRemTime] = useState("18:00");
+  const [perm, setPerm] = useState("default");
+
+  // install prompt
+  const [installEvt, setInstallEvt] = useState(null);
 
   // stopwatch
   const [swMs, setSwMs] = useState(0);
@@ -62,13 +36,21 @@ export default function App() {
   const swRef = useRef(null);
 
   useEffect(() => {
+    setLog(loadLog());
+    setLoaded(true);
     (async () => {
-      try {
-        const r = await window.storage.get("run5k:v2");
-        if (r && r.value) setLog(JSON.parse(r.value));
-      } catch (e) {}
-      setLoaded(true);
+      const r = await loadReminder();
+      setRemOn(!!r.enabled);
+      setRemTime(r.time || "18:00");
     })();
+    if (notificationsSupported()) setPerm(permission());
+  }, []);
+
+  // capture Android's "add to home screen" prompt
+  useEffect(() => {
+    const h = (e) => { e.preventDefault(); setInstallEvt(e); };
+    window.addEventListener("beforeinstallprompt", h);
+    return () => window.removeEventListener("beforeinstallprompt", h);
   }, []);
 
   useEffect(() => {
@@ -79,15 +61,15 @@ export default function App() {
     return () => swRef.current && clearInterval(swRef.current);
   }, [swRun]);
 
-  const persist = async (next) => {
-    try { await window.storage.set("run5k:v2", JSON.stringify(next)); } catch (e) {}
-  };
+  const persist = (next) => { setLog(next); saveLog(next); };
   const update = (key, patch) => {
     const cur = log[key] || {};
-    const next = { ...log, [key]: { ...cur, ...patch } };
-    setLog(next); persist(next);
+    const next = { ...cur, ...patch };
+    // stamp the completion date the first time a day is marked done (for history/charts)
+    if (patch.done && !cur.done && !next.date) next.date = new Date().toISOString();
+    persist({ ...log, [key]: next });
   };
-  const reset = async () => { setLog({}); await persist({}); setOpen(null); };
+  const reset = () => { persist({}); setOpen(null); };
 
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0;
@@ -99,21 +81,85 @@ export default function App() {
       if (!isNaN(k)) { kmLogged += k; if (k > 0) runsLogged++; }
       if (e.stitch) stitches++;
     });
-    // best streak over flat sequence
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
     return { kmLogged, done, stitches, runsLogged, best };
   }, [log]);
 
+  // chart + history data
+  const weekly = useMemo(() => WEEKS.map((w) => {
+    let value = 0, target = 0;
+    w.days.forEach((day, di) => {
+      target += day.km || 0;
+      const e = log[`w${w.n}d${di}`];
+      const k = e && parseFloat(e.km);
+      if (k && !isNaN(k)) value += k;
+    });
+    return { label: w.n, value, target };
+  }), [log]);
+
+  const history = useMemo(() => {
+    const items = FLAT.map((f) => ({ ...f, e: log[f.key] || {} }))
+      .filter((f) => f.e.done || parseFloat(f.e.km) > 0);
+    items.sort((a, b) => {
+      const da = a.e.date || "", db = b.e.date || "";
+      if (da && db) return db.localeCompare(da);
+      return 0;
+    });
+    return items;
+  }, [log]);
+
+  const cumulative = useMemo(() => {
+    const runs = history
+      .filter((h) => parseFloat(h.e.km) > 0)
+      .slice()
+      .sort((a, b) => (a.e.date || "").localeCompare(b.e.date || ""));
+    let total = 0;
+    return runs.map((r) => { total += parseFloat(r.e.km); return { total }; });
+  }, [history]);
+
   const pct = Math.round((stats.done / TOTAL) * 100);
   const nextUp = FLAT.find((f) => !(log[f.key] && log[f.key].done));
+
+  // keep the background reminder message in sync with today's session
+  const msg = nextUp ? `Today: Week ${nextUp.week} · ${nextUp.d} · ${nextUp.title} — ${nextUp.detail}` : "You finished the plan — go enjoy a victory run! 🎖️";
+  const msgRef = useRef(msg);
+  msgRef.current = msg;
+  useEffect(() => { if (remOn) syncMessage(msg); }, [msg, remOn]);
+
+  // foreground reminder scheduler (fires if app is open at reminder time)
+  useEffect(() => {
+    const stop = startForegroundScheduler(() => msgRef.current);
+    return stop;
+  }, []);
+
+  const toggleReminder = async () => {
+    if (remOn) {
+      await disableReminders();
+      setRemOn(false);
+    } else {
+      const ok = await enableReminders(remTime, msgRef.current);
+      setRemOn(ok);
+      setPerm(permission());
+      if (ok) showReminderNow(`Reminders on — I'll nudge you around ${remTime} ✅`);
+    }
+  };
+  const changeTime = async (t) => {
+    setRemTime(t);
+    if (remOn) await saveReminder({ time: t });
+  };
+  const doInstall = async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    await installEvt.userChoice;
+    setInstallEvt(null);
+  };
 
   const fmt = (ms) => {
     const s = Math.floor(ms / 1000), m = Math.floor(s / 60);
     return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   };
 
-  // progress ring math
   const R = 46, CIRC = 2 * Math.PI * R;
 
   const Stat = ({ label, value, sub, color }) => (
@@ -122,6 +168,10 @@ export default function App() {
       <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, marginTop: 6, fontWeight: 600 }}>{label}</div>
       {sub && <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sub}</div>}
     </div>
+  );
+
+  const Card = ({ children, style }) => (
+    <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, ...style }}>{children}</div>
   );
 
   return (
@@ -139,9 +189,11 @@ export default function App() {
         .inp { background:${C.bg}; border:1px solid ${C.line}; color:${C.text}; border-radius:10px; padding:9px 11px; width:100%; font-size:14px; font-weight:600; outline:none; }
         .inp:focus { border-color:${C.accent}; }
         .chip { cursor:pointer; border-radius:999px; padding:7px 13px; font-size:12px; font-weight:700; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; }
+        .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
+        .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
       `}</style>
 
-      <div style={{ maxWidth: 620, margin: "0 auto", padding: "22px 16px 70px" }}>
+      <div style={{ maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px 70px" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
@@ -161,9 +213,16 @@ export default function App() {
           </div>
         </div>
 
+        {/* Install banner */}
+        {installEvt && (
+          <button onClick={doInstall} className="chip" style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.accent, color: C.bg, border: "none", fontSize: 13 }}>
+            ⬇ Install Road to 5K on your phone
+          </button>
+        )}
+
         {/* Tabs */}
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {["plan", "stats"].map((t) => (
+          {["plan", "stats", "history"].map((t) => (
             <button key={t} onClick={() => setTab(t)} className="chip"
               style={{ flex: 1, padding: "10px 0", background: tab === t ? C.accent : C.surface, color: tab === t ? C.bg : C.dim, border: "none", textTransform: "uppercase", letterSpacing: 1 }}>
               {t}
@@ -182,8 +241,46 @@ export default function App() {
               <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} />
             </div>
 
+            {/* Charts */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>KM PER WEEK · LOGGED VS PLAN</div>
+              <WeeklyBars data={weekly} />
+            </Card>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>CUMULATIVE DISTANCE</div>
+              <CumulativeArea points={cumulative} />
+            </Card>
+
+            {/* Reminders */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>DAILY REMINDER</div>
+                  <div style={{ fontSize: 13, color: C.text, marginTop: 3, fontWeight: 600 }}>Get nudged to do your session</div>
+                </div>
+                <button onClick={toggleReminder} className="sw" style={{ background: remOn ? C.accent : C.line }} aria-label="Toggle reminders">
+                  <b style={{ left: remOn ? 22 : 3 }} />
+                </button>
+              </div>
+              {remOn && (
+                <div className="rise" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                  <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Remind me at</span>
+                  <input className="inp" type="time" value={remTime} onChange={(e) => changeTime(e.target.value)} style={{ width: "auto" }} />
+                </div>
+              )}
+              {!notificationsSupported() && (
+                <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>
+              )}
+              {notificationsSupported() && perm === "denied" && (
+                <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>
+              )}
+              <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
+                Tip: install the app (Add to Home Screen) for the most reliable reminders. The web can't guarantee an exact alarm when fully closed, but it'll catch up next time the app wakes.
+              </div>
+            </Card>
+
             {/* Stopwatch */}
-            <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 18, textAlign: "center" }}>
+            <Card style={{ textAlign: "center", padding: 18 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>RUN STOPWATCH</div>
               <div className="num" style={{ fontSize: 52, fontWeight: 800, margin: "6px 0 12px", color: swRun ? C.accent : C.text }}>{fmt(swMs)}</div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
@@ -193,7 +290,44 @@ export default function App() {
                 </button>
                 <button onClick={() => { setSwRun(false); setSwMs(0); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>RESET</button>
               </div>
-            </div>
+            </Card>
+          </div>
+        )}
+
+        {tab === "history" && (
+          <div className="rise">
+            {history.length === 0 ? (
+              <Card style={{ textAlign: "center" }}>
+                <div className="syne" style={{ fontSize: 18, fontWeight: 800 }}>No runs logged yet</div>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>Tick off a day on the Plan tab and it'll show up here.</div>
+              </Card>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {history.map((h) => {
+                  const p = pace(h.e.min, h.e.km);
+                  const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+                  return (
+                    <Card key={h.key} style={{ padding: "12px 14px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: typeColor(h.type) }} />
+                        <div style={{ flex: 1 }}>
+                          <div className="syne" style={{ fontSize: 15, fontWeight: 700 }}>{h.title}</div>
+                          <div style={{ fontSize: 11, color: C.dim }}>Week {h.week} · {h.d} · {date}</div>
+                          {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>“{h.e.note}”</div>}
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          {parseFloat(h.e.km) > 0 && <div className="num" style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{parseFloat(h.e.km)} km</div>}
+                          <div style={{ fontSize: 11, color: C.dim }}>
+                            {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}
+                          </div>
+                          {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH 😣</div>}
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -272,6 +406,9 @@ export default function App() {
                                   <input className="inp" type="number" inputMode="numeric" placeholder="—" value={e.min ?? ""} onChange={(ev) => update(key, { min: ev.target.value })} />
                                 </div>
                               </div>
+                              {pace(e.min, e.km) && (
+                                <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 10 }}>Pace: {pace(e.min, e.km)} / km</div>
+                              )}
                               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
                                 <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Side stitch hit?</span>
                                 <button onClick={() => update(key, { stitch: !e.stitch })} className="chip"
