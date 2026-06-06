@@ -23,7 +23,16 @@ You need to host the built app somewhere with an `https://` link, then install
 that link on your phone. Pick whichever host is easiest for you — the project is
 pre-configured for all of them.
 
-### Option A — Netlify (easiest, works from your phone, free, even for private repos)
+### Option A — Cloudflare (already wired up)
+
+This repo includes Cloudflare's own integration: `@cloudflare/vite-plugin` plus
+a `wrangler.jsonc`, so `npm run build` produces a deployable bundle and
+`npm run deploy` (`vite build && wrangler deploy`) ships it. The easiest path is
+to connect the repo in the Cloudflare dashboard (Workers & Pages → connect to
+Git) — it then redeploys automatically on every push. You'll get a
+`…​.workers.dev` link.
+
+### Option B — Netlify (also works from your phone, free, even for private repos)
 
 1. Go to **netlify.com** and sign up (you can log in with GitHub).
 2. **Add new site → Import an existing project → GitHub**, authorize, and pick
@@ -32,9 +41,8 @@ pre-configured for all of them.
    publish `dist`). Click **Deploy**.
 4. After ~1 minute you get a link like `https://<random-name>.netlify.app`.
 
-> Cloudflare Pages and Vercel work the same way — import the repo, deploy. They
-> auto-detect the Vite settings (Cloudflare: build command `npm run build`,
-> output `dist`).
+> **Vercel** works the same way — import the repo and deploy; `vercel.json`
+> handles the settings.
 
 ### Option B — GitHub Pages
 
