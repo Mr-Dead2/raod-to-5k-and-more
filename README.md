@@ -19,22 +19,37 @@ It installs to your phone like a normal app and works offline.
 
 ## Put it on your phone (Nothing Phone / any Android)
 
-This app auto-publishes to **GitHub Pages**. One-time setup:
+You need to host the built app somewhere with an `https://` link, then install
+that link on your phone. Pick whichever host is easiest for you — the project is
+pre-configured for all of them.
 
-1. On GitHub, open this repo → **Settings → Pages**.
-2. Under **Build and deployment → Source**, choose **GitHub Actions**.
-3. Make sure the latest code is on the **`main`** branch (merge this branch into
-   `main`). Every push to `main` rebuilds and deploys automatically.
-4. Wait for the green check on the **Actions** tab, then your link appears at the
-   top of the Pages settings — it looks like:
-   `https://<your-username>.github.io/raod-to-5k-and-more/`
+### Option A — Netlify (easiest, works from your phone, free, even for private repos)
 
-Then on your phone:
+1. Go to **netlify.com** and sign up (you can log in with GitHub).
+2. **Add new site → Import an existing project → GitHub**, authorize, and pick
+   this repo.
+3. The build settings auto-fill from `netlify.toml` (command `npm run build`,
+   publish `dist`). Click **Deploy**.
+4. After ~1 minute you get a link like `https://<random-name>.netlify.app`.
 
-5. Open that link in **Chrome**.
-6. Tap the **⋮ menu → Install app** (or "Add to Home Screen"). An icon appears on
-   your home screen.
-7. Open it from the icon, go to the **Stats** tab, turn on **Daily Reminder**,
+> Cloudflare Pages and Vercel work the same way — import the repo, deploy. They
+> auto-detect the Vite settings (Cloudflare: build command `npm run build`,
+> output `dist`).
+
+### Option B — GitHub Pages
+
+1. Repo → **Settings → Pages → Source → "GitHub Actions"**.
+2. Merge this branch into **`main`** (every push to `main` auto-deploys).
+3. Your link appears in the Pages settings:
+   `https://<username>.github.io/raod-to-5k-and-more/`
+   (Note: GitHub Pages on a **private** repo needs a paid plan — use Option A if
+   yours is private.)
+
+### Then, on your phone
+
+1. Open your link in **Chrome**.
+2. Tap **⋮ menu → Install app** (or "Add to Home Screen"). An icon appears.
+3. Open it from the icon, go to the **Stats** tab, turn on **Daily Reminder**,
    pick a time, and **Allow** notifications when asked.
 
 > Heads up on reminders: a website can't fire an exact alarm when it's fully
