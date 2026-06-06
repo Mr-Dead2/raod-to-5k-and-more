@@ -25,12 +25,20 @@ There is no test suite or linter configured.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` builds and deploys to **GitHub Pages on every push
-to `main`** (runs `npm ci` → `npm run icons` → `npm run build`, publishes `dist`).
-Pages must be enabled once: repo Settings → Pages → Source = "GitHub Actions".
-The site lives at `/<repo-name>/`, so `vite.config.js` sets `base` to
-`/raod-to-5k-and-more/`. Override with the `BASE_PATH` env var if hosting
-elsewhere (e.g. `BASE_PATH=/ npm run build`).
+`vite.config.js` defaults `base` to `/` (the root), which is what Cloudflare,
+Netlify, Vercel and local preview all serve from. Override with the `BASE_PATH`
+env var for sub-path hosts.
+
+- **Cloudflare (primary)** — `@cloudflare/vite-plugin` + `wrangler.jsonc` are
+  wired in. `npm run build` emits a deployable bundle (incl. `dist/wrangler.json`)
+  and `npm run deploy` runs `vite build && wrangler deploy`. Connecting the repo
+  in the Cloudflare dashboard auto-redeploys on push. `wrangler.jsonc` uses
+  `assets.not_found_handling: single-page-application`.
+- **Netlify / Vercel** — `netlify.toml` / `vercel.json` build with `npm run build`
+  and publish `dist`; base `/` is already correct.
+- **GitHub Pages** — `.github/workflows/main.yml` deploys on push to `main`, and
+  **must** pass `BASE_PATH: /raod-to-5k-and-more/` to `npm run build` (it does),
+  since Pages serves under `/<repo-name>/`. Requires a paid plan for private repos.
 
 ## Architecture
 
