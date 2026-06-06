@@ -19,3 +19,18 @@ export function saveLog(log) {
     /* storage full or blocked — fail silently like the original */
   }
 }
+
+// App settings (e.g. plan start date) kept separate from per-day progress.
+const SETTINGS = "run5k:settings";
+
+export function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS)) || {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveSettings(s) {
+  try { localStorage.setItem(SETTINGS, JSON.stringify(s)); } catch { /* ignore */ }
+}

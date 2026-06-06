@@ -70,9 +70,22 @@ env var for sub-path hosts.
   the plan. Be honest in any UX: the web cannot guarantee an exact alarm when
   fully closed.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
-  lib): `WeeklyBars` (logged vs plan target per week) and `CumulativeArea`
-  (running distance total). They are purely presentational — App computes the
-  arrays.
+  lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
+  distance total), and `StreakGrid` (a 4×7 calendar coloured by day status).
+  They are purely presentational — App computes the arrays/cells.
+- **Start date / "today" (`src/storage.js` settings, key `run5k:settings`).** An
+  optional `startDate` (a `YYYY-MM-DD` string) maps each plan day to a calendar
+  date; `todayIndexOf`/`dateForDay` in `App.jsx` derive today's flat index, the
+  header countdown, the per-row `TODAY` badge, and the `StreakGrid` cells.
+- **Achievements + celebrations.** `src/achievements.js` holds badge definitions
+  with pure `test(ctx)` predicates over a stats snapshot; App memoises the
+  unlocked set and shows a toast (with `haptic`) when a new one appears.
+  `src/celebrate.js` is a dependency-free `haptic()` (navigator.vibrate) and a
+  self-cleaning canvas `confetti()` burst, fired from `update()` on completing a
+  day/week/the whole plan. Both respect `prefers-reduced-motion`.
+- **Bottom navigation (`src/components/BottomNav.jsx`)** is the app-like fixed
+  tab bar (Plan/Stats/History) with inline SVG icons; it replaced the old top
+  chips. Page content reserves bottom padding for it and the safe-area inset.
 
 ## Styling conventions
 
