@@ -86,6 +86,17 @@ env var for sub-path hosts.
 - **Bottom navigation (`src/components/BottomNav.jsx`)** is the app-like fixed
   tab bar (Plan/Stats/History) with inline SVG icons; it replaced the old top
   chips. Page content reserves bottom padding for it and the safe-area inset.
+- **Live GPS run tracking.** `src/tracker.js` exposes a `useRunTracker()` hook
+  wrapping `geolocation.watchPosition`: it Haversine-sums distance (rejecting
+  jitter <2 m and jumps >11 m/s), drives elapsed time, records per-km splits, and
+  holds a screen Wake Lock. `src/components/RunTracker.jsx` is the full-screen
+  overlay (idle → tracking/paused → finished) that owns the hook; the route is
+  drawn by `RouteMap` (Charts.jsx) as a north-up, aspect-corrected SVG polyline
+  (no map tiles). On save it calls back into App, which writes a tracked session
+  via `update()` (`{ done, km, min, date, tracked, route, splits, durMs }`); the
+  route is downsampled to ≤250 `[lat,lng]` pairs to keep localStorage small.
+  History renders the route thumbnail + split chips for tracked runs. The overlay
+  is only mounted while open so GPS stops the moment it closes.
 
 ## Styling conventions
 
