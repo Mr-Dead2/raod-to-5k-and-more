@@ -11,6 +11,10 @@ import {
   enableReminders, disableReminders, showReminderNow, syncMessage,
   startForegroundScheduler,
 } from "./notifications.js";
+import {
+  isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
+  ensureLocationPermission, styleStatusBar,
+} from "./native.js";
 
 const DAY = 86400000;
 const paceSec = (min, km) => {
@@ -80,6 +84,9 @@ export default function App() {
       setRemTime(r.time || "18:00");
     })();
     if (notificationsSupported()) setPerm(permission());
+    // native app setup (no-ops on the web)
+    styleStatusBar();
+    ensureLocationPermission();
   }, []);
 
   useEffect(() => {
@@ -207,7 +214,11 @@ export default function App() {
   const msg = nextUp ? `Today: Week ${nextUp.week} · ${nextUp.d} · ${nextUp.title} — ${nextUp.detail}` : "You finished the plan — go enjoy a victory run! 🎖️";
   const msgRef = useRef(msg);
   msgRef.current = msg;
-  useEffect(() => { if (remOn) syncMessage(msg); }, [msg, remOn]);
+  useEffect(() => {
+    if (!remOn) return;
+    syncMessage(msg);
+    if (isNative()) nativeUpdateReminder(remTime, msg);
+  }, [msg, remOn]);
 
   useEffect(() => {
     const stop = startForegroundScheduler(() => msgRef.current);
@@ -216,14 +227,23 @@ export default function App() {
 
   const toggleReminder = async () => {
     haptic(10);
-    if (remOn) { await disableReminders(); setRemOn(false); }
-    else {
-      const ok = await enableReminders(remTime, msgRef.current);
+    if (remOn) {
+      await disableReminders();
+      if (isNative()) await nativeDisableReminder();
+      setRemOn(false);
+    } else {
+      const ok = isNative()
+        ? await nativeEnableReminder(remTime, msgRef.current)
+        : await enableReminders(remTime, msgRef.current);
+      if (ok) await saveReminder({ enabled: true, time: remTime, message: msgRef.current });
       setRemOn(ok); setPerm(permission());
-      if (ok) showReminderNow(`Reminders on — I'll nudge you around ${remTime} ✅`);
+      if (ok && !isNative()) showReminderNow(`Reminders on — I'll nudge you around ${remTime} ✅`);
     }
   };
-  const changeTime = async (t) => { setRemTime(t); if (remOn) await saveReminder({ time: t }); };
+  const changeTime = async (t) => {
+    setRemTime(t);
+    if (remOn) { await saveReminder({ time: t }); if (isNative()) await nativeUpdateReminder(t, msgRef.current); }
+  };
   const doInstall = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; setInstallEvt(null); };
 
   const fmt = (ms) => { const s = Math.floor(ms / 1000), m = Math.floor(s / 60); return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
@@ -406,10 +426,12 @@ export default function App() {
                   <input className="inp" type="time" value={remTime} onChange={(e) => changeTime(e.target.value)} style={{ width: "auto" }} />
                 </div>
               )}
-              {!notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>}
-              {notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>}
+              {!isNative() && !notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>}
+              {!isNative() && notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>}
               <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
-                Tip: install the app (Add to Home Screen) for the most reliable reminders.
+                {isNative()
+                  ? "Reminders run in the background and fire even when the app is closed."
+                  : "Tip: install the app (Add to Home Screen) for the most reliable reminders."}
               </div>
             </Card>
 
