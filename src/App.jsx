@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { WEEKS, FLAT, TOTAL, C, typeColor } from "./data.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
-import { WeeklyBars, CumulativeArea, StreakGrid } from "./components/Charts.jsx";
+import { WeeklyBars, CumulativeArea, StreakGrid, RouteMap } from "./components/Charts.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
+import { RunTracker } from "./components/RunTracker.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
@@ -54,6 +55,7 @@ export default function App() {
   const [tipsOpen, setTipsOpen] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [toast, setToast] = useState(null);
+  const [trackerOpen, setTrackerOpen] = useState(false);
 
   // reminders
   const [remOn, setRemOn] = useState(false);
@@ -193,6 +195,15 @@ export default function App() {
   const kmShown = useCountUp(stats.kmLogged);
   const nextUp = FLAT.find((f) => !(log[f.key] && log[f.key].done));
 
+  // which session a tracked run defaults to saving into
+  const todayKey = startDate && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx].key : null;
+  const trackDefaultKey = todayKey || (nextUp ? nextUp.key : FLAT[0].key);
+  const saveTrackedRun = (r) => {
+    update(r.dayKey, { done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs });
+    setTrackerOpen(false);
+    setTab("history");
+  };
+
   const msg = nextUp ? `Today: Week ${nextUp.week} · ${nextUp.d} · ${nextUp.title} — ${nextUp.detail}` : "You finished the plan — go enjoy a victory run! 🎖️";
   const msgRef = useRef(msg);
   msgRef.current = msg;
@@ -310,6 +321,10 @@ export default function App() {
 
         {tab === "stats" && (
           <div className="rise">
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+              <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
+            </button>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} />
               <Stat label="BEST STREAK" value={stats.best} sub="days in a row" />
@@ -398,9 +413,9 @@ export default function App() {
               </div>
             </Card>
 
-            {/* Stopwatch */}
+            {/* Stopwatch — treadmill / no-GPS fallback */}
             <Card style={{ textAlign: "center", padding: 18 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>RUN STOPWATCH</div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>TREADMILL STOPWATCH · NO GPS</div>
               <div className="num" style={{ fontSize: 52, fontWeight: 800, margin: "6px 0 12px", color: swRun ? C.accent : C.text }}>{fmt(swMs)}</div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
                 <button onClick={() => { setSwRun((r) => !r); haptic(10); }} className="chip"
@@ -438,8 +453,21 @@ export default function App() {
                           {parseFloat(h.e.km) > 0 && <div className="num" style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{parseFloat(h.e.km)} km</div>}
                           <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH 😣</div>}
+                          {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
                         </div>
                       </div>
+                      {h.e.route && h.e.route.length > 1 && (
+                        <div style={{ marginTop: 10 }}>
+                          <RouteMap points={h.e.route.map(([lat, lng]) => ({ lat, lng }))} height={130} />
+                          {h.e.splits && h.e.splits.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                              {h.e.splits.map((s, i) => (
+                                <span key={i} className="chip" style={{ background: C.surface2, color: C.text, fontSize: 11 }}>{i + 1}k · {fmtPace(s)}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
@@ -450,6 +478,10 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+              <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
+            </button>
             {!startDate && (
               <button onClick={() => { setTab("stats"); haptic(8); }} className="chip"
                 style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.surface, color: C.text, fontSize: 13 }}>
@@ -561,6 +593,15 @@ export default function App() {
       </div>
 
       <BottomNav tab={tab} onChange={(t) => { setTab(t); setOpen(null); haptic(6); }} />
+
+      {trackerOpen && (
+        <RunTracker
+          days={FLAT}
+          defaultKey={trackDefaultKey}
+          onSave={saveTrackedRun}
+          onClose={() => setTrackerOpen(false)}
+        />
+      )}
     </div>
   );
 }
