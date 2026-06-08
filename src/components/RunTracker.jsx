@@ -3,6 +3,7 @@ import { C } from "../data.js";
 import { RouteMap } from "./Charts.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
+import { ensureLocationPermission } from "../native.js";
 
 const fmtTime = (ms) => {
   const s = Math.floor(ms / 1000);
@@ -100,7 +101,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
           <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" }}>
             Head outside with a clear view of the sky, then press start. Keep this screen open while you run — your phone's GPS measures distance, pace and your route automatically.
           </div>
-          <button onClick={() => { haptic(15); t.start(); }} className="chip"
+          <button onClick={async () => { haptic(15); await ensureLocationPermission(); t.start(); }} className="chip"
             style={{ background: C.accent, color: C.bg, border: "none", padding: "16px 0", fontSize: 16, fontWeight: 800, letterSpacing: 1, maxWidth: 280, margin: "8px auto 0", width: "100%" }}>
             ▶ START RUN
           </button>
