@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Road to 5K</string>
+    <string name="title_activity_main">Road to 5K</string>
+    <string name="package_name">com.road5k.tracker</string>
+    <string name="custom_url_scheme">com.road5k.tracker</string>
+</resources>

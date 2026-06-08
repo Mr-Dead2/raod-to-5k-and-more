@@ -1,0 +1,15 @@
+{
+  "appId": "com.road5k.tracker",
+  "appName": "Road to 5K",
+  "webDir": "dist",
+  "backgroundColor": "#0c0d10",
+  "android": {
+    "backgroundColor": "#0c0d10"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#ccff33"
+    }
+  }
+}
