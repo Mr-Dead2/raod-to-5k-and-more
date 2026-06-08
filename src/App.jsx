@@ -262,9 +262,9 @@ export default function App() {
     }
   }
 
-  const Stat = ({ label, value, sub, color }) => (
-    <div className="card tap" style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
-      <div className="num" style={{ fontSize: 26, fontWeight: 800, color: color || C.text, lineHeight: 1 }}>{value}</div>
+  const Stat = ({ label, value, sub, color, delay = 0 }) => (
+    <div className="card tap stagger" style={{ animationDelay: `${delay}s`, flex: 1, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
+      <div className="num" style={{ fontSize: 27, fontWeight: 800, color: color || C.text, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, marginTop: 6, fontWeight: 600 }}>{label}</div>
       {sub && <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sub}</div>}
     </div>
@@ -297,7 +297,38 @@ export default function App() {
         .chip:active { transform: scale(.96); }
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
+        html, body { background:${C.bg}; }
+        /* ambient glow behind the header */
+        .appbg { position:fixed; inset:0; pointer-events:none; z-index:0;
+          background:
+            radial-gradient(120% 60% at 85% -8%, ${C.accent}1f, transparent 60%),
+            radial-gradient(90% 50% at -10% 4%, ${C.easy}14, transparent 55%); }
+        /* cards get a subtle top-lit depth + hairline highlight */
+        .card { background: linear-gradient(180deg, ${C.surface}, ${C.surface2}) !important;
+          box-shadow: 0 1px 0 0 rgba(255,255,255,.03) inset, 0 10px 30px -22px #000; }
+        .card.glow { box-shadow: 0 0 0 1px ${C.accent}, 0 0 26px -6px ${C.accent}; }
+        /* gradient primary call-to-action with a slow sheen */
+        .cta { position:relative; overflow:hidden; border:none !important;
+          background: linear-gradient(135deg, ${C.accent}, ${C.easy}) !important; color:${C.bg} !important;
+          box-shadow: 0 10px 30px -10px ${C.accent}; }
+        .cta::after { content:""; position:absolute; top:0; bottom:0; width:40%; left:-60%;
+          background: linear-gradient(100deg, transparent, rgba(255,255,255,.45), transparent);
+          transform: skewX(-18deg); animation: sheen 4.5s ease-in-out infinite; }
+        @keyframes sheen { 0%,55%{ left:-60% } 80%,100%{ left:140% } }
+        /* breathing glow for the hero "next up" card */
+        @keyframes pulseGlow { 0%,100%{ box-shadow: 0 0 0 1px ${C.accent}88, 0 0 22px -10px ${C.accent} } 50%{ box-shadow: 0 0 0 1px ${C.accent}, 0 0 40px -6px ${C.accent} } }
+        .breathe { animation: pulseGlow 3.4s ease-in-out infinite; }
+        /* staggered fade/scale used by stat cards, weeks and grid cells */
+        @keyframes cellIn { from{ opacity:0; transform: scale(.5) } to{ opacity:1; transform: none } }
+        @keyframes slideUp { from{ opacity:0; transform: translateY(14px) } to{ opacity:1; transform:none } }
+        .stagger { opacity:0; animation: slideUp .45s ease forwards; }
+        @keyframes spin { to { transform: rotate(360deg) } }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes floaty { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-3px) } }
+        @media (prefers-reduced-motion: reduce){ .breathe,.stagger,.cta::after,.spin{ animation:none !important } .stagger{ opacity:1 } }
       `}</style>
+
+      <div className="appbg" />
 
       {/* Achievement toast */}
       {toast && (
@@ -312,7 +343,7 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
@@ -322,9 +353,15 @@ export default function App() {
           </div>
           <div style={{ position: "relative", width: 108, height: 108 }}>
             <svg width="108" height="108" style={{ transform: "rotate(-90deg)" }}>
+              <defs>
+                <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor={C.accent} />
+                  <stop offset="100%" stopColor={C.easy} />
+                </linearGradient>
+              </defs>
               <circle cx="54" cy="54" r={R} fill="none" stroke={C.surface2} strokeWidth="9" />
-              <circle cx="54" cy="54" r={R} fill="none" stroke={C.accent} strokeWidth="9" strokeLinecap="round"
-                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease" }} />
+              <circle cx="54" cy="54" r={R} fill="none" stroke="url(#ring)" strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease", filter: `drop-shadow(0 0 6px ${C.accent}66)` }} />
             </svg>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               <span className="num" style={{ fontSize: 24, fontWeight: 800 }}>{pctShown}%</span>
@@ -341,17 +378,17 @@ export default function App() {
 
         {tab === "stats" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 14, padding: "16px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer" }}>
               <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
             </button>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} />
-              <Stat label="BEST STREAK" value={stats.best} sub="days in a row" />
+              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} delay={0} />
+              <Stat label="BEST STREAK" value={stats.best} sub="days in a row" delay={0.05} />
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <Stat label="RUNS DONE" value={stats.runsLogged} />
-              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} />
+              <Stat label="RUNS DONE" value={stats.runsLogged} delay={0.1} />
+              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} delay={0.15} />
             </div>
 
             {/* Personal bests */}
@@ -500,8 +537,8 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 14, padding: "16px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer" }}>
               <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
             </button>
             {!startDate && (
@@ -512,9 +549,10 @@ export default function App() {
             )}
             {/* Next up */}
             {nextUp ? (
-              <div className="glow" style={{ background: C.surface, borderRadius: 16, padding: 16, marginBottom: 18 }}>
+              <div className="breathe" style={{ background: `linear-gradient(135deg, ${C.surface2}, ${C.surface})`, borderRadius: 16, padding: 18, marginBottom: 18, position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", right: -30, top: -30, width: 120, height: 120, borderRadius: "50%", background: `radial-gradient(circle, ${C.accent}22, transparent 70%)` }} />
                 <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>NEXT UP · WEEK {nextUp.week}</div>
-                <div className="syne" style={{ fontSize: 24, fontWeight: 800, margin: "4px 0 2px" }}>{nextUp.d} · {nextUp.title}</div>
+                <div className="syne" style={{ fontSize: 25, fontWeight: 800, margin: "5px 0 3px" }}>{nextUp.d} · {nextUp.title}</div>
                 <div style={{ fontSize: 13, color: C.dim }}>{nextUp.detail}</div>
               </div>
             ) : (
@@ -540,7 +578,7 @@ export default function App() {
             {WEEKS.map((w) => {
               const wDone = w.days.filter((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done).length;
               return (
-                <div key={w.n} style={{ marginBottom: 22 }}>
+                <div key={w.n} className="stagger" style={{ marginBottom: 22, animationDelay: `${(w.n - 1) * 0.06}s` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                     <span className="syne" style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1 }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>
