@@ -131,8 +131,42 @@ export default function App() {
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
+  const importRef = useRef(null);
+  const exportData = () => {
+    haptic(8);
+    const payload = { app: "road-to-5k", version: 1, exportedAt: new Date().toISOString(), log, settings: { startDate } };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setToast({ icon: "💾", title: "Backup downloaded", label: "BACKUP" });
+  };
+  const importData = async (file) => {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data && data.log && typeof data.log === "object") {
+        persist(data.log);
+        if (data.settings && data.settings.startDate !== undefined) saveStart(data.settings.startDate || "");
+        haptic([10, 30, 10]);
+        setToast({ icon: "✅", title: "Backup restored", label: "BACKUP" });
+      } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
+    } catch { setToast({ icon: "⚠️", title: "Couldn't read that file", label: "BACKUP" }); }
+  };
+  const shareProgress = async () => {
+    haptic(8);
+    const text = `Road to 5K — ${stats.done}/${TOTAL} sessions done, ${stats.kmLogged.toFixed(1)} km logged, best streak ${stats.best} days. ${pct}% of the way to a continuous 5K! 🏃`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Road to 5K", text });
+      else { await navigator.clipboard.writeText(text); setToast({ icon: "📋", title: "Copied to clipboard", label: "SHARE" }); }
+    } catch { /* user cancelled */ }
+  };
+
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
+    let timeSum = 0, paceKmSum = 0;
     FLAT.forEach((f) => {
       const e = log[f.key];
       if (!e) return;
@@ -142,11 +176,14 @@ export default function App() {
       if (e.stitch) stitches++;
       const ps = paceSec(e.min, e.km);
       if (ps && (bestPaceSec === 0 || ps < bestPaceSec)) bestPaceSec = ps;
+      const mm = parseFloat(e.min);
+      if (mm > 0 && k > 0) { timeSum += mm * 60; paceKmSum += k; }
     });
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
-    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks };
+    const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
+    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, projected5kSec: avgPaceSec * 5 };
   }, [log]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
@@ -262,9 +299,9 @@ export default function App() {
     }
   }
 
-  const Stat = ({ label, value, sub, color }) => (
-    <div className="card tap" style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
-      <div className="num" style={{ fontSize: 26, fontWeight: 800, color: color || C.text, lineHeight: 1 }}>{value}</div>
+  const Stat = ({ label, value, sub, color, delay = 0 }) => (
+    <div className="card tap stagger" style={{ animationDelay: `${delay}s`, flex: 1, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
+      <div className="num" style={{ fontSize: 27, fontWeight: 800, color: color || C.text, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, marginTop: 6, fontWeight: 600 }}>{label}</div>
       {sub && <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sub}</div>}
     </div>
@@ -297,7 +334,39 @@ export default function App() {
         .chip:active { transform: scale(.96); }
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
+        html, body { background:${C.bg}; }
+        /* ambient glow behind the header */
+        .appbg { position:fixed; inset:0; pointer-events:none; z-index:0;
+          background:
+            radial-gradient(120% 60% at 85% -8%, ${C.accent}1f, transparent 60%),
+            radial-gradient(90% 50% at -10% 4%, ${C.easy}14, transparent 55%); }
+        /* cards get a subtle top-lit depth + hairline highlight */
+        .card { background: linear-gradient(180deg, ${C.surface}, ${C.surface2}) !important;
+          box-shadow: 0 1px 0 0 rgba(255,255,255,.03) inset, 0 10px 30px -22px #000; }
+        .card.glow { box-shadow: 0 0 0 1px ${C.accent}, 0 0 26px -6px ${C.accent}; }
+        /* gradient primary call-to-action with a slow sheen */
+        .cta { position:relative; overflow:hidden; border:none !important;
+          background: linear-gradient(135deg, ${C.accent}, ${C.easy}) !important; color:${C.bg} !important;
+          box-shadow: 0 10px 30px -10px ${C.accent}; }
+        .cta::after { content:""; position:absolute; top:0; bottom:0; width:40%; left:-60%;
+          background: linear-gradient(100deg, transparent, rgba(255,255,255,.45), transparent);
+          transform: skewX(-18deg); animation: sheen 4.5s ease-in-out infinite; }
+        @keyframes sheen { 0%,55%{ left:-60% } 80%,100%{ left:140% } }
+        /* breathing glow for the hero "next up" card */
+        @keyframes pulseGlow { 0%,100%{ box-shadow: 0 0 0 1px ${C.accent}88, 0 0 22px -10px ${C.accent} } 50%{ box-shadow: 0 0 0 1px ${C.accent}, 0 0 40px -6px ${C.accent} } }
+        .breathe { animation: pulseGlow 3.4s ease-in-out infinite; }
+        /* staggered fade/scale used by stat cards, weeks and grid cells */
+        @keyframes cellIn { from{ opacity:0; transform: scale(.5) } to{ opacity:1; transform: none } }
+        @keyframes slideUp { from{ opacity:0; transform: translateY(14px) } to{ opacity:1; transform:none } }
+        .stagger { opacity:0; animation: slideUp .45s ease forwards; }
+        @keyframes spin { to { transform: rotate(360deg) } }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes floaty { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-6px) } }
+        .floaty { animation: floaty 3s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce){ .breathe,.stagger,.cta::after,.spin{ animation:none !important } .stagger{ opacity:1 } }
       `}</style>
+
+      <div className="appbg" />
 
       {/* Achievement toast */}
       {toast && (
@@ -305,14 +374,14 @@ export default function App() {
           <div className="glow" style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 14, padding: "12px 14px" }}>
             <span style={{ fontSize: 26 }}>{toast.icon}</span>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>{toast.label || "ACHIEVEMENT UNLOCKED"}</div>
               <div className="syne" style={{ fontSize: 15, fontWeight: 800 }}>{toast.title}</div>
             </div>
           </div>
         </div>
       )}
 
-      <div style={{ maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
@@ -322,9 +391,15 @@ export default function App() {
           </div>
           <div style={{ position: "relative", width: 108, height: 108 }}>
             <svg width="108" height="108" style={{ transform: "rotate(-90deg)" }}>
+              <defs>
+                <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor={C.accent} />
+                  <stop offset="100%" stopColor={C.easy} />
+                </linearGradient>
+              </defs>
               <circle cx="54" cy="54" r={R} fill="none" stroke={C.surface2} strokeWidth="9" />
-              <circle cx="54" cy="54" r={R} fill="none" stroke={C.accent} strokeWidth="9" strokeLinecap="round"
-                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease" }} />
+              <circle cx="54" cy="54" r={R} fill="none" stroke="url(#ring)" strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease", filter: `drop-shadow(0 0 6px ${C.accent}66)` }} />
             </svg>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               <span className="num" style={{ fontSize: 24, fontWeight: 800 }}>{pctShown}%</span>
@@ -341,17 +416,17 @@ export default function App() {
 
         {tab === "stats" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 14, padding: "16px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer" }}>
               <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
             </button>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} />
-              <Stat label="BEST STREAK" value={stats.best} sub="days in a row" />
+              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} delay={0} />
+              <Stat label="BEST STREAK" value={stats.best} sub="days in a row" delay={0.05} />
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <Stat label="RUNS DONE" value={stats.runsLogged} />
-              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} />
+              <Stat label="RUNS DONE" value={stats.runsLogged} delay={0.1} />
+              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} delay={0.15} />
             </div>
 
             {/* Personal bests */}
@@ -363,6 +438,17 @@ export default function App() {
                 <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1)} unit="km" />
               </div>
             </Card>
+
+            {stats.projected5kSec > 0 && (
+              <Card style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 30 }}>🎯</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>PROJECTED 5K TIME</div>
+                  <div className="num" style={{ fontSize: 24, fontWeight: 800, color: C.accent }}>{fmtPace(stats.projected5kSec)}</div>
+                  <div style={{ fontSize: 11, color: C.dim }}>at your average logged pace ({fmtPace(stats.avgPaceSec)}/km)</div>
+                </div>
+              </Card>
+            )}
 
             {/* Schedule / today */}
             <Card style={{ marginBottom: 12 }}>
@@ -435,6 +521,21 @@ export default function App() {
               </div>
             </Card>
 
+            {/* Data & backup */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>DATA & BACKUP</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={exportData} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>⬇ Export</button>
+                <button onClick={() => importRef.current?.click()} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>⬆ Import</button>
+                <button onClick={shareProgress} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>↗ Share</button>
+              </div>
+              <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+                onChange={(e) => { importData(e.target.files[0]); e.target.value = ""; }} />
+              <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
+                Export saves your runs to a file; Import restores them (e.g. on a new phone). Your data lives only on this device.
+              </div>
+            </Card>
+
             {/* Stopwatch — treadmill / no-GPS fallback */}
             <Card style={{ textAlign: "center", padding: 18 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>TREADMILL STOPWATCH · NO GPS</div>
@@ -500,8 +601,8 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, background: C.accent, color: C.bg, border: "none", borderRadius: 14, padding: "15px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer", boxShadow: `0 0 26px -8px ${C.accent}` }}>
+            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta"
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 14, padding: "16px 0", fontSize: 15, fontWeight: 800, letterSpacing: 0.5, marginBottom: 14, cursor: "pointer" }}>
               <span style={{ width: 9, height: 9, borderRadius: 9, background: C.bg }} /> TRACK A RUN WITH GPS
             </button>
             {!startDate && (
@@ -512,9 +613,10 @@ export default function App() {
             )}
             {/* Next up */}
             {nextUp ? (
-              <div className="glow" style={{ background: C.surface, borderRadius: 16, padding: 16, marginBottom: 18 }}>
+              <div className="breathe" style={{ background: `linear-gradient(135deg, ${C.surface2}, ${C.surface})`, borderRadius: 16, padding: 18, marginBottom: 18, position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", right: -30, top: -30, width: 120, height: 120, borderRadius: "50%", background: `radial-gradient(circle, ${C.accent}22, transparent 70%)` }} />
                 <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>NEXT UP · WEEK {nextUp.week}</div>
-                <div className="syne" style={{ fontSize: 24, fontWeight: 800, margin: "4px 0 2px" }}>{nextUp.d} · {nextUp.title}</div>
+                <div className="syne" style={{ fontSize: 25, fontWeight: 800, margin: "5px 0 3px" }}>{nextUp.d} · {nextUp.title}</div>
                 <div style={{ fontSize: 13, color: C.dim }}>{nextUp.detail}</div>
               </div>
             ) : (
@@ -540,7 +642,7 @@ export default function App() {
             {WEEKS.map((w) => {
               const wDone = w.days.filter((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done).length;
               return (
-                <div key={w.n} style={{ marginBottom: 22 }}>
+                <div key={w.n} className="stagger" style={{ marginBottom: 22, animationDelay: `${(w.n - 1) * 0.06}s` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                     <span className="syne" style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1 }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>

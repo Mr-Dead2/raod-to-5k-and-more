@@ -1,8 +1,35 @@
-// Small, dependency-free celebration helpers: haptic buzz + canvas confetti.
+// Small celebration helpers: haptic buzz + canvas confetti.
+import { isNative } from "./native.js";
 
-// Vibrate if the device/browser supports it (Android Chrome does; iOS ignores).
+// Vibrate. On the web/PWA this uses navigator.vibrate (Android Chrome). In the
+// native app it routes through Capacitor Haptics for a stronger, reliable buzz —
+// short numbers map to impact taps, bigger numbers to a timed vibration, and
+// array patterns (e.g. run/walk cues) fall back to the system vibrator.
 export function haptic(pattern = 12) {
-  try { navigator.vibrate && navigator.vibrate(pattern); } catch { /* ignore */ }
+  if (isNative()) {
+    nativeHaptic(pattern);
+  } else {
+    try { navigator.vibrate && navigator.vibrate(pattern); } catch { /* ignore */ }
+  }
+}
+
+async function nativeHaptic(pattern) {
+  try {
+    const { Haptics, ImpactStyle, NotificationType } = await import("@capacitor/haptics");
+    if (Array.isArray(pattern)) {
+      // multi-buzz pattern (e.g. switch run/walk) — use the raw vibrator
+      try { navigator.vibrate && navigator.vibrate(pattern); } catch { /* ignore */ }
+      await Haptics.notification({ type: NotificationType.Warning });
+    } else if (pattern <= 12) {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } else if (pattern <= 25) {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+    } else {
+      await Haptics.vibrate({ duration: pattern });
+    }
+  } catch {
+    try { navigator.vibrate && navigator.vibrate(pattern); } catch { /* ignore */ }
+  }
 }
 
 // Fire a confetti burst from the bottom-centre of the screen. Self-cleaning.
