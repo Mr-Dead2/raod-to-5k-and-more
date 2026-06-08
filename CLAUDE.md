@@ -118,8 +118,14 @@ branch on `isNative()` between this and the web notification layer.
   History renders the route thumbnail + split chips for tracked runs. The overlay
   is only mounted while open so GPS stops the moment it closes. The tracker also
   has a 3-2-1 countdown, GPS auto-pause (`opts.autoPause`, freezes the clock when
-  stopped >7 s and resumes on movement), and per-km audio cues (`src/cues.js`:
-  Web Speech + Web Audio beeps).
+  stopped >7 s and resumes on movement), per-km audio cues (`src/cues.js`: Web
+  Speech + Web Audio beeps), and **run/walk interval cues**: it parses the
+  session's `run X / walk Y` pattern, derives the current phase from elapsed time,
+  and buzzes + beeps + announces "Run now" / "Walk now" at each switch (RUN/WALK
+  banner with countdown; run/walk minutes adjustable on the idle screen).
+- **Haptics.** `haptic()` in `src/celebrate.js` uses `navigator.vibrate` on the
+  web and **`@capacitor/haptics`** in the native app (impact taps for short
+  buzzes, timed vibration for longer, raw vibrator for array patterns).
 - **Backup / share / goal.** Stats has a Data card: JSON export (Blob download),
   import (restores `log` + `startDate`), and `navigator.share` (clipboard
   fallback). `stats.projected5kSec` (avg logged pace × 5) drives a projected-5K

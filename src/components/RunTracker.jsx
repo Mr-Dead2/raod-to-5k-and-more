@@ -42,6 +42,25 @@ function Toggle({ on, label, onClick }) {
   );
 }
 
+// Pull a "run X / walk Y" pattern (minutes) out of a session's description.
+function parseInterval(detail = "") {
+  const m = detail.match(/run\s*(\d+)\s*(?:min)?\s*\/\s*walk\s*(\d+)/i);
+  return m ? { run: Number(m[1]), walk: Number(m[2]) } : null;
+}
+
+function StepCard({ label, val, set }) {
+  return (
+    <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+      <button className="chip" onClick={() => { set((v) => Math.max(0, v - 1)); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>−</button>
+      <div style={{ flex: 1, textAlign: "center" }}>
+        <div className="num" style={{ fontSize: 18, fontWeight: 800 }}>{val}</div>
+        <div style={{ fontSize: 8, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} MIN</div>
+      </div>
+      <button className="chip" onClick={() => { set((v) => v + 1); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>+</button>
+    </div>
+  );
+}
+
 export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const [audioOn, setAudioOn] = useState(true);
   const [autoPauseOn, setAutoPauseOn] = useState(true);
@@ -49,6 +68,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const t = useRunTracker({ autoPause: autoPauseOn });
   const [dayKey, setDayKey] = useState(defaultKey);
   useEffect(() => { setDayKey(defaultKey); }, [defaultKey]);
+
+  // run/walk intervals, pre-filled from the upcoming session's pattern
+  const parsed = parseInterval(days.find((d) => d.key === defaultKey)?.detail);
+  const [intervalOn, setIntervalOn] = useState(!!parsed);
+  const [runMin, setRunMin] = useState(parsed?.run || 6);
+  const [walkMin, setWalkMin] = useState(parsed?.walk || 1);
 
   // spoken / beep cue whenever a new km split is recorded
   const prevSplits = useRef(0);
@@ -66,6 +91,25 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const avgPace = km > 0.02 ? elapsedSec / km : 0;
   const curPace = t.status === "tracking" && !t.autoPaused ? recentPaceSec(t.points) : 0;
   const accColor = t.accuracy == null ? C.dim : t.accuracy <= 12 ? C.easy : t.accuracy <= 30 ? C.accent : C.warn;
+
+  // run/walk phase derived from elapsed time (so it freezes with pause/auto-pause)
+  const cycleSec = (runMin + walkMin) * 60;
+  const intervalActive = intervalOn && runMin > 0 && walkMin > 0 && (t.status === "tracking" || t.status === "paused");
+  let phase = null, phaseLeft = 0;
+  if (intervalActive && cycleSec > 0) {
+    const pos = elapsedSec % cycleSec;
+    if (pos < runMin * 60) { phase = "RUN"; phaseLeft = Math.ceil(runMin * 60 - pos); }
+    else { phase = "WALK"; phaseLeft = Math.ceil(cycleSec - pos); }
+  }
+  const prevPhase = useRef(null);
+  useEffect(() => {
+    if (!phase) { prevPhase.current = null; return; }
+    if (prevPhase.current && prevPhase.current !== phase) {
+      if (phase === "WALK") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOn) speak("Walk now"); }
+      else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOn) speak("Run now"); }
+    }
+    prevPhase.current = phase;
+  }, [phase, audioOn]);
 
   const countIv = useRef(null);
   useEffect(() => () => clearInterval(countIv.current), []);
@@ -140,9 +184,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
           <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" }}>
             Head outside with a clear view of the sky, then press start. Keep this screen open while you run — your phone's GPS measures distance, pace and your route automatically.
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "center", margin: "2px auto 0" }}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", margin: "2px auto 0", flexWrap: "wrap" }}>
             <Toggle on={audioOn} label="🔊 Voice cues" onClick={() => { setAudioOn((v) => !v); haptic(6); }} />
             <Toggle on={autoPauseOn} label="⏯ Auto-pause" onClick={() => { setAutoPauseOn((v) => !v); haptic(6); }} />
+          </div>
+          <div style={{ maxWidth: 320, width: "100%", margin: "0 auto" }}>
+            <Toggle on={intervalOn} label="🏃 / 🚶 Run-walk buzz cues" onClick={() => { setIntervalOn((v) => !v); haptic(6); }} />
+            {intervalOn && (
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <StepCard label="RUN" val={runMin} set={setRunMin} />
+                <StepCard label="WALK" val={walkMin} set={setWalkMin} />
+              </div>
+            )}
           </div>
           <button onClick={beginRun} className="chip cta"
             style={{ padding: "16px 0", fontSize: 16, fontWeight: 800, letterSpacing: 1, maxWidth: 280, margin: "8px auto 0", width: "100%", borderRadius: 999 }}>
@@ -162,6 +215,16 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             {t.autoPaused && <span className="chip" style={{ background: C.warn, color: C.bg, border: "none", fontSize: 10 }}>⏸ AUTO-PAUSED · START MOVING</span>}
             {t.status === "paused" && <span className="chip" style={{ background: C.surface2, color: C.dim, fontSize: 10 }}>PAUSED</span>}
           </div>
+
+          {phase && (
+            <div className="rise" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, background: phase === "RUN" ? `${C.accent}1f` : `${C.easy}1f`, border: `1px solid ${phase === "RUN" ? C.accent : C.easy}`, borderRadius: 14, padding: "12px 14px", marginBottom: 14 }}>
+              <span style={{ fontSize: 26 }}>{phase === "RUN" ? "🏃" : "🚶"}</span>
+              <div style={{ textAlign: "left" }}>
+                <div className="syne" style={{ fontSize: 19, fontWeight: 800, color: phase === "RUN" ? C.accent : C.easy }}>{phase} NOW</div>
+                <div className="num" style={{ fontSize: 12, color: C.dim }}>{Math.floor(phaseLeft / 60)}:{String(phaseLeft % 60).padStart(2, "0")} left in this interval</div>
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", marginBottom: 18 }}>
             <Big label="TIME" value={fmtTime(t.elapsedMs)} />
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
