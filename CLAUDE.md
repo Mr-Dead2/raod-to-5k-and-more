@@ -116,7 +116,14 @@ branch on `isNative()` between this and the web notification layer.
   via `update()` (`{ done, km, min, date, tracked, route, splits, durMs }`); the
   route is downsampled to ≤250 `[lat,lng]` pairs to keep localStorage small.
   History renders the route thumbnail + split chips for tracked runs. The overlay
-  is only mounted while open so GPS stops the moment it closes.
+  is only mounted while open so GPS stops the moment it closes. The tracker also
+  has a 3-2-1 countdown, GPS auto-pause (`opts.autoPause`, freezes the clock when
+  stopped >7 s and resumes on movement), and per-km audio cues (`src/cues.js`:
+  Web Speech + Web Audio beeps).
+- **Backup / share / goal.** Stats has a Data card: JSON export (Blob download),
+  import (restores `log` + `startDate`), and `navigator.share` (clipboard
+  fallback). `stats.projected5kSec` (avg logged pace × 5) drives a projected-5K
+  card. The achievement toast is reused for backup/share via an optional `label`.
 
 ## Styling conventions
 

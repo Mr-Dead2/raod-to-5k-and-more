@@ -131,8 +131,42 @@ export default function App() {
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
+  const importRef = useRef(null);
+  const exportData = () => {
+    haptic(8);
+    const payload = { app: "road-to-5k", version: 1, exportedAt: new Date().toISOString(), log, settings: { startDate } };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setToast({ icon: "💾", title: "Backup downloaded", label: "BACKUP" });
+  };
+  const importData = async (file) => {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data && data.log && typeof data.log === "object") {
+        persist(data.log);
+        if (data.settings && data.settings.startDate !== undefined) saveStart(data.settings.startDate || "");
+        haptic([10, 30, 10]);
+        setToast({ icon: "✅", title: "Backup restored", label: "BACKUP" });
+      } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
+    } catch { setToast({ icon: "⚠️", title: "Couldn't read that file", label: "BACKUP" }); }
+  };
+  const shareProgress = async () => {
+    haptic(8);
+    const text = `Road to 5K — ${stats.done}/${TOTAL} sessions done, ${stats.kmLogged.toFixed(1)} km logged, best streak ${stats.best} days. ${pct}% of the way to a continuous 5K! 🏃`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Road to 5K", text });
+      else { await navigator.clipboard.writeText(text); setToast({ icon: "📋", title: "Copied to clipboard", label: "SHARE" }); }
+    } catch { /* user cancelled */ }
+  };
+
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
+    let timeSum = 0, paceKmSum = 0;
     FLAT.forEach((f) => {
       const e = log[f.key];
       if (!e) return;
@@ -142,11 +176,14 @@ export default function App() {
       if (e.stitch) stitches++;
       const ps = paceSec(e.min, e.km);
       if (ps && (bestPaceSec === 0 || ps < bestPaceSec)) bestPaceSec = ps;
+      const mm = parseFloat(e.min);
+      if (mm > 0 && k > 0) { timeSum += mm * 60; paceKmSum += k; }
     });
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
-    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks };
+    const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
+    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, projected5kSec: avgPaceSec * 5 };
   }, [log]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
@@ -324,7 +361,8 @@ export default function App() {
         .stagger { opacity:0; animation: slideUp .45s ease forwards; }
         @keyframes spin { to { transform: rotate(360deg) } }
         .spin { animation: spin 1s linear infinite; }
-        @keyframes floaty { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-3px) } }
+        @keyframes floaty { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-6px) } }
+        .floaty { animation: floaty 3s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce){ .breathe,.stagger,.cta::after,.spin{ animation:none !important } .stagger{ opacity:1 } }
       `}</style>
 
@@ -336,7 +374,7 @@ export default function App() {
           <div className="glow" style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 14, padding: "12px 14px" }}>
             <span style={{ fontSize: 26 }}>{toast.icon}</span>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>ACHIEVEMENT UNLOCKED</div>
+              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>{toast.label || "ACHIEVEMENT UNLOCKED"}</div>
               <div className="syne" style={{ fontSize: 15, fontWeight: 800 }}>{toast.title}</div>
             </div>
           </div>
@@ -400,6 +438,17 @@ export default function App() {
                 <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1)} unit="km" />
               </div>
             </Card>
+
+            {stats.projected5kSec > 0 && (
+              <Card style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 30 }}>🎯</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>PROJECTED 5K TIME</div>
+                  <div className="num" style={{ fontSize: 24, fontWeight: 800, color: C.accent }}>{fmtPace(stats.projected5kSec)}</div>
+                  <div style={{ fontSize: 11, color: C.dim }}>at your average logged pace ({fmtPace(stats.avgPaceSec)}/km)</div>
+                </div>
+              </Card>
+            )}
 
             {/* Schedule / today */}
             <Card style={{ marginBottom: 12 }}>
@@ -469,6 +518,21 @@ export default function App() {
                 {isNative()
                   ? "Reminders run in the background and fire even when the app is closed."
                   : "Tip: install the app (Add to Home Screen) for the most reliable reminders."}
+              </div>
+            </Card>
+
+            {/* Data & backup */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>DATA & BACKUP</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={exportData} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>⬇ Export</button>
+                <button onClick={() => importRef.current?.click()} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>⬆ Import</button>
+                <button onClick={shareProgress} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0" }}>↗ Share</button>
+              </div>
+              <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+                onChange={(e) => { importData(e.target.files[0]); e.target.value = ""; }} />
+              <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
+                Export saves your runs to a file; Import restores them (e.g. on a new phone). Your data lives only on this device.
               </div>
             </Card>
 
