@@ -21,6 +21,7 @@ const MAX_ACCURACY_M = 35; // ignore fixes with worse horizontal accuracy
 const MAX_SPEED_MS = 11;   // reject implausible jumps (≈ 1:31/km pace)
 const MIN_STEP_M = 2;      // reject sub-jitter movement
 const PROCESS_NOISE = 3;   // Kalman process noise — assumed runner speed, m/s
+const CLIMB_HYST_M = 2;    // GPS altitude is noisy — only count climbs past this
 
 export function useRunTracker(opts = {}) {
   const optsRef = useRef(opts);
@@ -34,6 +35,9 @@ export function useRunTracker(opts = {}) {
   const [splits, setSplits] = useState([]);      // seconds per completed km
   const [accuracy, setAccuracy] = useState(null);
   const [error, setError] = useState(null);
+  const [elevGainM, setElevGainM] = useState(0); // total metres climbed
+  const [maxSpeedMs, setMaxSpeedMs] = useState(0);
+  const [phaseDist, setPhaseDist] = useState({ run: 0, walk: 0 }); // metres per interval phase
 
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -49,6 +53,10 @@ export function useRunTracker(opts = {}) {
   const nextKm = useRef(1);
   const splitBase = useRef(0);   // elapsed seconds at the last km marker
   const kalman = useRef(null);   // { lat, lng, variance, t } — smoothing state
+  const alt = useRef(null);      // { smooth, ref } — EMA altitude + climb reference
+  const elevRef = useRef(0);
+  const maxSpeedRef = useRef(0);
+  const phaseDistRef = useRef({ run: 0, walk: 0 });
   const wakeLock = useRef(null);
 
   // elapsed time, frozen while auto-paused
@@ -108,6 +116,29 @@ export function useRunTracker(opts = {}) {
     last.current = p;
     setPoints((pts) => [...pts, p]);
 
+    const segSpeed = d / dt;
+    if (segSpeed > maxSpeedRef.current) { maxSpeedRef.current = segSpeed; setMaxSpeedMs(segSpeed); }
+
+    // elevation gain: EMA-smoothed altitude, climbs counted with hysteresis
+    if (f.alt != null && isFinite(f.alt)) {
+      if (!alt.current) alt.current = { smooth: f.alt, ref: f.alt };
+      else {
+        const a = alt.current;
+        a.smooth += 0.3 * (f.alt - a.smooth);
+        if (a.smooth - a.ref >= CLIMB_HYST_M) { elevRef.current += a.smooth - a.ref; a.ref = a.smooth; setElevGainM(elevRef.current); }
+        else if (a.smooth < a.ref) a.ref = a.smooth;
+      }
+    }
+
+    // bucket distance into the current run/walk interval phase, if any
+    const iv = optsRef.current.interval;
+    if (iv && iv.runSec > 0 && iv.walkSec > 0) {
+      const pos = (liveElapsed() / 1000) % (iv.runSec + iv.walkSec);
+      const key = pos < iv.runSec ? "run" : "walk";
+      phaseDistRef.current = { ...phaseDistRef.current, [key]: phaseDistRef.current[key] + d };
+      setPhaseDist(phaseDistRef.current);
+    }
+
     while (distRef.current / 1000 >= nextKm.current) {
       const sec = liveElapsed() / 1000;
       const split = sec - splitBase.current;
@@ -143,9 +174,11 @@ export function useRunTracker(opts = {}) {
     setError(null);
     if (!startWatch()) return;
     distRef.current = 0; nextKm.current = 1; splitBase.current = 0; last.current = null; baseMs.current = 0;
-    kalman.current = null;
+    kalman.current = null; alt.current = null;
+    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 };
     lastMoveAt.current = Date.now(); setAuto(false);
     setDistanceM(0); setSplits([]); setPoints([]); setElapsedMs(0);
+    setElevGainM(0); setMaxSpeedMs(0); setPhaseDist({ run: 0, walk: 0 });
     startedAt.current = Date.now();
     setStatus("tracking");
     acquireWake();
@@ -167,6 +200,7 @@ export function useRunTracker(opts = {}) {
     // while paused doesn't count and a stale estimate can't cause a jump
     last.current = null;
     kalman.current = null;
+    alt.current = null;
     setAuto(false);
     setStatus("tracking");
     acquireWake();
@@ -188,11 +222,17 @@ export function useRunTracker(opts = {}) {
     stopWatch();
     releaseWake();
     setAuto(false);
-    kalman.current = null;
+    kalman.current = null; alt.current = null;
+    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 };
     setStatus("idle"); setElapsedMs(0); setDistanceM(0); setPoints([]); setSplits([]); setError(null); setAccuracy(null);
+    setElevGainM(0); setMaxSpeedMs(0); setPhaseDist({ run: 0, walk: 0 });
   }, [releaseWake]);
 
   useEffect(() => () => { clearInterval(ticker.current); stopWatch(); releaseWake(); }, [releaseWake]);
 
-  return { status, autoPaused, elapsedMs, distanceM, points, splits, accuracy, error, start, pause, resume, finish, reset };
+  return {
+    status, autoPaused, elapsedMs, distanceM, points, splits, accuracy, error,
+    elevGainM, maxSpeedMs, phaseDist,
+    start, pause, resume, finish, reset,
+  };
 }

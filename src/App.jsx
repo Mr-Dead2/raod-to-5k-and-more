@@ -269,7 +269,10 @@ export default function App() {
   const todayKey = startDate && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx].key : null;
   const trackDefaultKey = todayKey || (nextUp ? nextUp.key : FLAT[0].key);
   const saveTrackedRun = (r) => {
-    update(r.dayKey, { done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs });
+    update(r.dayKey, {
+      done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs,
+      elev: r.elev, kcal: r.kcal, runKm: r.runKm, walkKm: r.walkKm,
+    });
     setTrackerOpen(false);
     setTab("history");
   };
@@ -592,6 +595,11 @@ export default function App() {
                 {history.map((h, idx) => {
                   const p = fmtPace(paceSec(h.e.min, h.e.km));
                   const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+                  const extras = [];
+                  if (h.e.elev > 0) extras.push(`▲ ${h.e.elev} m`);
+                  if (h.e.kcal > 0) extras.push(`🔥 ${h.e.kcal} kcal`);
+                  if (h.e.runKm > 0) extras.push(`🏃 ${h.e.runKm} km`);
+                  if (h.e.walkKm > 0) extras.push(`🚶 ${h.e.walkKm} km`);
                   return (
                     <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -608,9 +616,18 @@ export default function App() {
                           {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
                         </div>
                       </div>
-                      {h.e.route && h.e.route.length > 1 && (
+                      {(extras.length > 0 || (h.e.route && h.e.route.length > 1)) && (
                         <div style={{ marginTop: 10 }}>
-                          <RouteMap points={h.e.route.map(([lat, lng]) => ({ lat, lng }))} height={130} />
+                          {h.e.route && h.e.route.length > 1 && (
+                            <RouteMap points={h.e.route.map(([lat, lng]) => ({ lat, lng }))} height={130} />
+                          )}
+                          {extras.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                              {extras.map((x, i) => (
+                                <span key={i} className="chip" style={{ background: C.surface2, color: C.dim, fontSize: 11 }}>{x}</span>
+                              ))}
+                            </div>
+                          )}
                           {h.e.splits && h.e.splits.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                               {h.e.splits.map((s, i) => (

@@ -6,7 +6,8 @@
 // that; there the screen Wake Lock in tracker.js is the mitigation).
 //
 // Both paths deliver the same normalised fix shape:
-//   { lat, lng, accuracy, speed, t }   (speed may be null; t is epoch ms)
+//   { lat, lng, accuracy, speed, alt, t }
+//   (speed/alt may be null; t is epoch ms)
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 export const ERR_PERMISSION = "Location permission denied — allow it to track your run.";
@@ -45,6 +46,7 @@ function startNativeWatch(onFix, onError) {
         lng: location.longitude,
         accuracy: location.accuracy,
         speed: location.speed,
+        alt: location.altitude,
         t: location.time || Date.now(),
       });
     },
@@ -72,6 +74,7 @@ function startWebWatch(onFix, onError) {
       lng: pos.coords.longitude,
       accuracy: pos.coords.accuracy,
       speed: pos.coords.speed,
+      alt: pos.coords.altitude,
       t: pos.timestamp || Date.now(),
     }),
     (e) => onError(e.code === 1 ? ERR_PERMISSION : ERR_SIGNAL),

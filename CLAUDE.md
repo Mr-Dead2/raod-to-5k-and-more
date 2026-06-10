@@ -120,14 +120,23 @@ front — the other headline reason to go native.
   (rejecting jitter <2 m and jumps >11 m/s), drives elapsed time (also bumped
   from each fix, since timers throttle in the background), records per-km
   splits, and holds a screen Wake Lock. Manual resume clears the last
-  point/filter so ground covered while paused doesn't count.
-  `src/components/RunTracker.jsx` is the full-screen
+  point/filter so ground covered while paused doesn't count. It also derives
+  richer metrics: `elevGainM` (EMA-smoothed GPS altitude, climbs counted with
+  2 m hysteresis), `maxSpeedMs`, and `phaseDist` — distance bucketed into
+  run vs walk via `opts.interval` (`{runSec,walkSec}`) when interval cues are
+  on. RunTracker turns those into current speed, calories (`KCAL_RUN`/
+  `KCAL_WALK` per kg·km; body weight is a stepper on the idle screen,
+  persisted as `weightKg` in `run5k:settings`), per-phase time (computed
+  analytically from elapsed time and the cycle) and a live run/walk
+  breakdown card. `src/components/RunTracker.jsx` is the full-screen
   overlay (idle → tracking/paused → finished) that owns the hook; the route is
   drawn by `RouteMap` (Charts.jsx) as a north-up, aspect-corrected SVG polyline
   (no map tiles). On save it calls back into App, which writes a tracked session
-  via `update()` (`{ done, km, min, date, tracked, route, splits, durMs }`); the
+  via `update()` (`{ done, km, min, date, tracked, route, splits, durMs, elev,
+  kcal, runKm, walkKm }`); the
   route is downsampled to ≤250 `[lat,lng]` pairs to keep localStorage small.
-  History renders the route thumbnail + split chips for tracked runs. The overlay
+  History renders the route thumbnail, split chips and extra-metric chips
+  (elevation / kcal / run vs walk km) for tracked runs. The overlay
   is only mounted while open so GPS stops the moment it closes. The tracker also
   has a 3-2-1 countdown, GPS auto-pause (`opts.autoPause`, freezes the clock when
   stopped >7 s and resumes on movement), per-km audio cues (`src/cues.js`: Web

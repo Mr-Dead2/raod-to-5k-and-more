@@ -5,6 +5,10 @@ import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
 import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
+import { loadSettings, saveSettings } from "../storage.js";
+
+// kcal per kg of body weight per km — standard flat-ground estimates
+const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
 
 const fmtTime = (ms) => {
   const s = Math.floor(ms / 1000);
@@ -48,15 +52,34 @@ function parseInterval(detail = "") {
   return m ? { run: Number(m[1]), walk: Number(m[2]) } : null;
 }
 
-function StepCard({ label, val, set }) {
+function StepCard({ label, val, set, unit = "MIN" }) {
   return (
     <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
       <button className="chip" onClick={() => { set((v) => Math.max(0, v - 1)); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>−</button>
       <div style={{ flex: 1, textAlign: "center" }}>
         <div className="num" style={{ fontSize: 18, fontWeight: 800 }}>{val}</div>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} MIN</div>
+        <div style={{ fontSize: 8, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} {unit}</div>
       </div>
       <button className="chip" onClick={() => { set((v) => v + 1); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>+</button>
+    </div>
+  );
+}
+
+// Live run-vs-walk breakdown while interval cues are on: distance, time and
+// pace covered in each phase.
+function PhaseBreakdown({ runM, walkM, runSec, walkSec }) {
+  if (runM + walkM < 20) return null;
+  const row = (emoji, label, m, sec, color) => (
+    <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 10px", textAlign: "center" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color }}>{emoji} {label}</div>
+      <div className="num" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>{(m / 1000).toFixed(2)} km</div>
+      <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0)}/km</div>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      {row("🏃", "RUN", runM, runSec, C.accent)}
+      {row("🚶", "WALK", walkM, walkSec, C.easy)}
     </div>
   );
 }
@@ -65,7 +88,6 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const [audioOn, setAudioOn] = useState(true);
   const [autoPauseOn, setAutoPauseOn] = useState(true);
   const [count, setCount] = useState(null); // 3..1, "GO", or null
-  const t = useRunTracker({ autoPause: autoPauseOn });
   const [dayKey, setDayKey] = useState(defaultKey);
   useEffect(() => { setDayKey(defaultKey); }, [defaultKey]);
 
@@ -74,6 +96,19 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const [intervalOn, setIntervalOn] = useState(!!parsed);
   const [runMin, setRunMin] = useState(parsed?.run || 6);
   const [walkMin, setWalkMin] = useState(parsed?.walk || 1);
+
+  const t = useRunTracker({
+    autoPause: autoPauseOn,
+    interval: intervalOn && runMin > 0 && walkMin > 0 ? { runSec: runMin * 60, walkSec: walkMin * 60 } : null,
+  });
+
+  // body weight for the calorie estimate, remembered between runs
+  const [weightKg, setWeightKg] = useState(() => loadSettings().weightKg || 70);
+  const setWeight = (fn) => setWeightKg((v) => {
+    const n = Math.max(30, typeof fn === "function" ? fn(v) : fn);
+    saveSettings({ ...loadSettings(), weightKg: n });
+    return n;
+  });
 
   // spoken / beep cue whenever a new km split is recorded
   const prevSplits = useRef(0);
@@ -92,6 +127,13 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const curPace = t.status === "tracking" && !t.autoPaused ? recentPaceSec(t.points) : 0;
   const accColor = t.accuracy == null ? C.dim : t.accuracy <= 12 ? C.easy : t.accuracy <= 30 ? C.accent : C.warn;
 
+  const speedNow = curPace > 0 ? 3600 / curPace : 0; // km/h
+  // distance covered while running vs walking (run/walk cues only)
+  const runKm = t.phaseDist.run / 1000, walkKm = t.phaseDist.walk / 1000;
+  // anything tracked outside the interval phases burns at the running rate
+  const otherKm = Math.max(0, km - runKm - walkKm);
+  const kcal = weightKg * (runKm * KCAL_RUN + walkKm * KCAL_WALK + otherKm * KCAL_RUN);
+
   // run/walk phase derived from elapsed time (so it freezes with pause/auto-pause)
   const cycleSec = (runMin + walkMin) * 60;
   const intervalActive = intervalOn && runMin > 0 && walkMin > 0 && (t.status === "tracking" || t.status === "paused");
@@ -100,6 +142,13 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
     const pos = elapsedSec % cycleSec;
     if (pos < runMin * 60) { phase = "RUN"; phaseLeft = Math.ceil(runMin * 60 - pos); }
     else { phase = "WALK"; phaseLeft = Math.ceil(cycleSec - pos); }
+  }
+  // time spent in each phase follows directly from elapsed time and the cycle
+  let runTimeSec = 0, walkTimeSec = 0;
+  if (intervalOn && cycleSec > 0 && runMin > 0 && walkMin > 0) {
+    const fullCycles = Math.floor(elapsedSec / cycleSec);
+    runTimeSec = fullCycles * runMin * 60 + Math.min(elapsedSec % cycleSec, runMin * 60);
+    walkTimeSec = Math.max(0, elapsedSec - runTimeSec);
   }
   const prevPhase = useRef(null);
   useEffect(() => {
@@ -141,6 +190,9 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
       route: downsample(t.points),
       splits: t.splits,
       durMs: t.elapsedMs,
+      elev: Math.round(t.elevGainM),
+      kcal: Math.round(kcal),
+      ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}),
     });
     haptic([15, 30, 15]);
   };
@@ -198,6 +250,10 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
                 <StepCard label="WALK" val={walkMin} set={setWalkMin} />
               </div>
             )}
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <StepCard label="WEIGHT" unit="KG" val={weightKg} set={setWeight} />
+            </div>
+            <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>Weight is only used for the calorie estimate.</div>
           </div>
           <button onClick={beginRun} className="chip cta"
             style={{ padding: "16px 0", fontSize: 16, fontWeight: 800, letterSpacing: 1, maxWidth: 280, margin: "8px auto 0", width: "100%", borderRadius: 999 }}>
@@ -227,11 +283,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
               </div>
             </div>
           )}
-          <div style={{ display: "flex", marginBottom: 18 }}>
+          <div style={{ display: "flex", marginBottom: 14 }}>
             <Big label="TIME" value={fmtTime(t.elapsedMs)} />
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
             <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
           </div>
+          <div style={{ display: "flex", marginBottom: 18 }}>
+            <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
+            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
+            <Big label="KCAL" value={Math.round(kcal)} />
+          </div>
+
+          <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
           <RouteMap points={t.points} height={190} />
 
@@ -258,11 +321,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
       {/* FINISHED */}
       {t.status === "finished" && (
         <div className="rise">
-          <div style={{ display: "flex", marginBottom: 16 }}>
+          <div style={{ display: "flex", marginBottom: 12 }}>
             <Big label="DISTANCE" value={`${km.toFixed(2)}`} color={C.accent} />
             <Big label="TIME" value={fmtTime(t.elapsedMs)} />
             <Big label="AVG PACE" value={`${fmtPace(avgPace)}`} />
           </div>
+          <div style={{ display: "flex", marginBottom: 16 }}>
+            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
+            <Big label="KCAL" value={Math.round(kcal)} />
+            <Big label="TOP SPEED" value={t.maxSpeedMs ? `${(t.maxSpeedMs * 3.6).toFixed(1)}` : "--"} />
+          </div>
+
+          <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
           <RouteMap points={t.points} height={200} />
 
