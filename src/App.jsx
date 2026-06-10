@@ -13,7 +13,7 @@ import {
 } from "./notifications.js";
 import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
-  ensureLocationPermission, styleStatusBar,
+  ensureLocationPermission, styleStatusBar, nativeShareBackup,
 } from "./native.js";
 
 const DAY = 86400000;
@@ -132,26 +132,52 @@ export default function App() {
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
   const importRef = useRef(null);
-  const exportData = () => {
+  const exportData = async () => {
     haptic(8);
-    const payload = { app: "road-to-5k", version: 1, exportedAt: new Date().toISOString(), log, settings: { startDate } };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const payload = { app: "road-to-5k", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...loadSettings(), startDate } };
+    const json = JSON.stringify(payload, null, 2);
+    const filename = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    // native: Blob downloads don't work in the WebView — share the file instead
+    if (isNative()) {
+      const ok = await nativeShareBackup(json, filename);
+      setToast(ok ? { icon: "💾", title: "Backup ready to share", label: "BACKUP" }
+                  : { icon: "⚠️", title: "Couldn't export backup", label: "BACKUP" });
+      return;
+    }
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     setToast({ icon: "💾", title: "Backup downloaded", label: "BACKUP" });
   };
+  // Accepts current (v2) and old (v1) backups, plus a raw log object copied
+  // straight out of localStorage — so runs survive any app version change.
+  const parseBackup = (data) => {
+    if (!data || typeof data !== "object") return null;
+    if (data.log && typeof data.log === "object") return { log: data.log, settings: data.settings || {} };
+    if (Object.keys(data).some((k) => /^w\d+d\d+$/.test(k))) return { log: data, settings: {} };
+    return null;
+  };
   const importData = async (file) => {
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
-      if (data && data.log && typeof data.log === "object") {
-        persist(data.log);
-        if (data.settings && data.settings.startDate !== undefined) saveStart(data.settings.startDate || "");
+      const backup = parseBackup(JSON.parse(await file.text()));
+      if (backup) {
+        // merge rather than replace, so importing an old backup never wipes
+        // sessions logged since it was taken; the backup wins per session
+        const merged = { ...log };
+        let restored = 0;
+        for (const [k, e] of Object.entries(backup.log)) {
+          if (!e || typeof e !== "object") continue;
+          merged[k] = { ...merged[k], ...e };
+          restored++;
+        }
+        persist(merged);
+        if (backup.settings.startDate) saveStart(backup.settings.startDate);
         haptic([10, 30, 10]);
-        setToast({ icon: "✅", title: "Backup restored", label: "BACKUP" });
+        setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}`, label: "BACKUP" });
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
     } catch { setToast({ icon: "⚠️", title: "Couldn't read that file", label: "BACKUP" }); }
   };
@@ -532,7 +558,10 @@ export default function App() {
               <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
                 onChange={(e) => { importData(e.target.files[0]); e.target.value = ""; }} />
               <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
-                Export saves your runs to a file; Import restores them (e.g. on a new phone). Your data lives only on this device.
+                {isNative()
+                  ? "Export opens the share sheet — send the backup file to Drive, email or your new phone, then Import it there."
+                  : "Export saves your runs to a file; Import restores them (e.g. on a new phone or a new version of the app)."}
+                {" "}Importing merges with what's already here, so nothing gets wiped. Your data lives only on this device.
               </div>
             </Card>
 

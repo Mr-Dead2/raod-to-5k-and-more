@@ -3,7 +3,7 @@ import { C } from "../data.js";
 import { RouteMap } from "./Charts.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
-import { ensureLocationPermission } from "../native.js";
+import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 
 const fmtTime = (ms) => {
@@ -182,7 +182,9 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
           <div style={{ fontSize: 48 }} className="floaty">📍</div>
           <div className="syne" style={{ fontSize: 22, fontWeight: 800 }}>Ready when you are</div>
           <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" }}>
-            Head outside with a clear view of the sky, then press start. Keep this screen open while you run — your phone's GPS measures distance, pace and your route automatically.
+            {isNative()
+              ? "Head outside with a clear view of the sky, then press start. You can turn the screen off or switch apps — tracking keeps running in the background (you'll see a notification while it records)."
+              : "Head outside with a clear view of the sky, then press start. Keep this screen open while you run — the browser pauses GPS when the screen is off, so the app holds it awake for you."}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "center", margin: "2px auto 0", flexWrap: "wrap" }}>
             <Toggle on={audioOn} label="🔊 Voice cues" onClick={() => { setAudioOn((v) => !v); haptic(6); }} />

@@ -48,8 +48,13 @@ bridge: every export no-ops on the web (guarded by `Capacitor.isNativePlatform()
 so one codebase runs in both. Natively it schedules a daily repeating
 `@capacitor/local-notifications` (reliable when the app is closed — the headline
 reason to go native), requests location up front for the in-WebView GPS tracker,
-and styles the status bar. `App.jsx`'s reminder toggle/time/message handlers
-branch on `isNative()` between this and the web notification layer.
+exports backups via `@capacitor/filesystem` + `@capacitor/share` (Blob downloads
+don't work in the WebView), and styles the status bar. `App.jsx`'s reminder
+toggle/time/message handlers branch on `isNative()` between this and the web
+notification layer. Run tracking natively uses
+`@capacitor-community/background-geolocation` (see `src/geo.js`), whose location
+foreground service keeps GPS recording with the screen off or another app in
+front — the other headline reason to go native.
 
 - Build: `npm run build && npx cap sync android`, then `npm run android:open`
   (Android Studio) or `npm run android:apk` (CLI → `app-debug.apk`). The Android
@@ -107,9 +112,16 @@ branch on `isNative()` between this and the web notification layer.
   tab bar (Plan/Stats/History) with inline SVG icons; it replaced the old top
   chips. Page content reserves bottom padding for it and the safe-area inset.
 - **Live GPS run tracking.** `src/tracker.js` exposes a `useRunTracker()` hook
-  wrapping `geolocation.watchPosition`: it Haversine-sums distance (rejecting
-  jitter <2 m and jumps >11 m/s), drives elapsed time, records per-km splits, and
-  holds a screen Wake Lock. `src/components/RunTracker.jsx` is the full-screen
+  over `src/geo.js`'s `startLocationWatch()` (web: `geolocation.watchPosition`;
+  native: the background-geolocation foreground service, so tracking survives
+  screen-off/app-switch — both deliver the same `{lat,lng,accuracy,speed,t}`
+  fix shape). The hook gates fixes by accuracy (>35 m dropped), smooths them
+  with a small accuracy-weighted Kalman filter, Haversine-sums distance
+  (rejecting jitter <2 m and jumps >11 m/s), drives elapsed time (also bumped
+  from each fix, since timers throttle in the background), records per-km
+  splits, and holds a screen Wake Lock. Manual resume clears the last
+  point/filter so ground covered while paused doesn't count.
+  `src/components/RunTracker.jsx` is the full-screen
   overlay (idle → tracking/paused → finished) that owns the hook; the route is
   drawn by `RouteMap` (Charts.jsx) as a north-up, aspect-corrected SVG polyline
   (no map tiles). On save it calls back into App, which writes a tracked session
@@ -126,9 +138,14 @@ branch on `isNative()` between this and the web notification layer.
 - **Haptics.** `haptic()` in `src/celebrate.js` uses `navigator.vibrate` on the
   web and **`@capacitor/haptics`** in the native app (impact taps for short
   buzzes, timed vibration for longer, raw vibrator for array patterns).
-- **Backup / share / goal.** Stats has a Data card: JSON export (Blob download),
-  import (restores `log` + `startDate`), and `navigator.share` (clipboard
-  fallback). `stats.projected5kSec` (avg logged pace × 5) drives a projected-5K
+- **Backup / share / goal.** Stats has a Data card: JSON export (Blob download
+  on the web; Filesystem + share sheet natively, payload `version: 2` with the
+  full settings object), import, and `navigator.share` progress text (clipboard
+  fallback). Import **merges** per session key (backup wins per key, nothing is
+  wiped) and accepts v2/v1 payloads or a raw `log` object; `storage.js` also
+  migrates legacy localStorage keys (`run5k:v1`, `run5k`) into `run5k:v2` on
+  load — keep both paths working when changing stored shapes.
+  `stats.projected5kSec` (avg logged pace × 5) drives a projected-5K
   card. The achievement toast is reused for backup/share via an optional `label`.
 
 ## Styling conventions

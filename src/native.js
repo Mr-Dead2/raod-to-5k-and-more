@@ -46,6 +46,25 @@ export async function ensureLocationPermission() {
   } catch { /* user can still grant it when the tracker prompts */ }
 }
 
+// Export a backup from the native app. Blob downloads don't work in the
+// Android WebView, so write the JSON to the app cache and open the system
+// share sheet — from there it can go to Drive, email, another phone, etc.
+export async function nativeShareBackup(json, filename) {
+  if (!isNative()) return false;
+  try {
+    const { Filesystem, Directory, Encoding } = await import("@capacitor/filesystem");
+    const { Share } = await import("@capacitor/share");
+    const { uri } = await Filesystem.writeFile({
+      path: filename, data: json, directory: Directory.Cache, encoding: Encoding.UTF8,
+    });
+    await Share.share({ title: filename, files: [uri] });
+    return true;
+  } catch (e) {
+    // share sheet dismissed counts as done; anything else means it failed
+    return /cancel/i.test(String(e?.message || e));
+  }
+}
+
 // Match the dark status bar to the app.
 export async function styleStatusBar() {
   if (!isNative()) return;
