@@ -31,6 +31,15 @@ const todayIndexOf = (iso) => {
   return Math.round((now - startOfDay(iso)) / DAY);
 };
 const dateForDay = (iso, i) => { const d = startOfDay(iso); d.setDate(d.getDate() + i); return d; };
+const relDate = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso); d.setHours(0, 0, 0, 0);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const diff = Math.round((now - d) / DAY);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
 
 // Smoothly animate a number toward its target for that satisfying count-up feel.
 function useCountUp(target, ms = 650) {
@@ -127,7 +136,34 @@ export default function App() {
     }
   };
 
-  const reset = () => { persist({}); setOpen(null); haptic(10); };
+  // Marking done with no distance typed pre-fills the planned km so the
+  // weekly bars / totals reflect the session instead of showing 0.
+  const markDone = (key, day) => {
+    const e = log[key] || {};
+    const patch = { done: true };
+    if ((e.km === undefined || e.km === "") && day.km > 0) patch.km = String(day.km);
+    update(key, patch);
+  };
+
+  const openDay = (key) => {
+    setOpen(key);
+    requestAnimationFrame(() => {
+      document.getElementById(`day-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  // Reset is destructive, so it takes two taps within a few seconds.
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => {
+    if (!confirmReset) return;
+    const t = setTimeout(() => setConfirmReset(false), 3500);
+    return () => clearTimeout(t);
+  }, [confirmReset]);
+  const reset = () => {
+    if (!confirmReset) { setConfirmReset(true); haptic(8); return; }
+    persist({}); setOpen(null); setConfirmReset(false); haptic(10);
+    setToast({ icon: "🗑️", title: "Progress cleared", label: "RESET" });
+  };
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
@@ -335,6 +371,8 @@ export default function App() {
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
         html, body { background:${C.bg}; }
+        html { scroll-behavior: smooth; }
+        button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; border-radius: 6px; }
         /* ambient glow behind the header */
         .appbg { position:fixed; inset:0; pointer-events:none; z-index:0;
           background:
@@ -560,9 +598,21 @@ export default function App() {
               </Card>
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
+                {(() => {
+                  const km = history.reduce((a, h) => a + (parseFloat(h.e.km) || 0), 0);
+                  const min = Math.round(history.reduce((a, h) => a + (parseFloat(h.e.min) || 0), 0));
+                  const time = min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
+                  return (
+                    <div style={{ display: "flex", gap: 8, marginBottom: 2 }}>
+                      <Stat label="SESSIONS" value={history.length} delay={0} />
+                      <Stat label="TOTAL KM" value={km.toFixed(1)} color={C.accent} delay={0.05} />
+                      <Stat label="TIME ON FEET" value={time} delay={0.1} />
+                    </div>
+                  );
+                })()}
                 {history.map((h, idx) => {
                   const p = fmtPace(paceSec(h.e.min, h.e.km));
-                  const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+                  const date = relDate(h.e.date);
                   return (
                     <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -618,6 +668,16 @@ export default function App() {
                 <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>NEXT UP · WEEK {nextUp.week}</div>
                 <div className="syne" style={{ fontSize: 25, fontWeight: 800, margin: "5px 0 3px" }}>{nextUp.d} · {nextUp.title}</div>
                 <div style={{ fontSize: 13, color: C.dim }}>{nextUp.detail}</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 14, position: "relative" }}>
+                  <button onClick={() => { markDone(nextUp.key, nextUp); }} className="chip tap"
+                    style={{ flex: 1, background: C.accent, color: C.bg, border: "none", padding: "10px 0", fontSize: 12, letterSpacing: 0.5 }}>
+                    ✓ MARK DONE
+                  </button>
+                  <button onClick={() => { openDay(nextUp.key); haptic(6); }} className="chip tap"
+                    style={{ flex: 1, background: C.surface, color: C.text, padding: "10px 0", fontSize: 12, letterSpacing: 0.5 }}>
+                    ✎ LOG DETAILS
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="glow" style={{ background: C.surface, borderRadius: 16, padding: 18, marginBottom: 18, textAlign: "center" }}>
@@ -646,7 +706,10 @@ export default function App() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                     <span className="syne" style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1 }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>{wDone}/{w.days.length}</span>
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: wDone === w.days.length ? C.accent : C.dim, fontWeight: 600 }}>{wDone === w.days.length ? "✓ " : ""}{wDone}/{w.days.length}</span>
+                  </div>
+                  <div style={{ height: 4, borderRadius: 4, background: C.surface2, marginBottom: 9, overflow: "hidden" }}>
+                    <div style={{ width: `${(wDone / w.days.length) * 100}%`, height: "100%", borderRadius: 4, background: `linear-gradient(90deg, ${C.accent}, ${C.easy})`, transition: "width .45s ease" }} />
                   </div>
                   <div style={{ display: "grid", gap: 7 }}>
                     {w.days.map((day, di) => {
@@ -656,10 +719,11 @@ export default function App() {
                       const flatIdx = (w.n - 1) * 7 + di;
                       const isToday = flatIdx === todayIdx;
                       return (
-                        <div key={di}>
+                        <div key={di} id={`day-${key}`}>
                           <div className="row tap" onClick={() => { setOpen(isOpen ? null : key); haptic(5); }}
-                            style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${isToday ? C.accent : e.done ? typeColor(day.type) : C.line}`, borderRadius: isOpen ? "12px 12px 0 0" : 12, padding: "11px 13px", boxShadow: isToday ? `0 0 18px -8px ${C.accent}` : "none" }}>
-                            <button onClick={(ev) => { ev.stopPropagation(); update(key, { done: !e.done }); }}
+                            style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${isToday ? C.accent : e.done ? typeColor(day.type) : C.line}`, borderRadius: isOpen ? "12px 12px 0 0" : 12, padding: "11px 13px", boxShadow: isToday ? `0 0 18px -8px ${C.accent}` : "none", opacity: e.done && !isOpen ? 0.72 : 1 }}>
+                            <button onClick={(ev) => { ev.stopPropagation(); if (e.done) update(key, { done: false }); else markDone(key, day); }}
+                              aria-label={e.done ? "Mark not done" : "Mark done"}
                               className={e.done ? "pop" : ""}
                               style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `2px solid ${e.done ? typeColor(day.type) : C.line}`, background: e.done ? typeColor(day.type) : "transparent", color: C.bg, fontWeight: 900, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               {e.done ? "✓" : ""}
@@ -709,7 +773,9 @@ export default function App() {
             <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: 13, fontSize: 12, lineHeight: 1.5, color: C.dim, marginBottom: 14 }}>
               <b style={{ color: C.text }}>Listen to your body.</b> Muscle soreness = normal. Sharp joint or shin pain = stop and rest 1–2 days. Don't arrive injured.
             </div>
-            <button onClick={reset} className="chip" style={{ fontSize: 11, letterSpacing: 1 }}>RESET ALL PROGRESS</button>
+            <button onClick={reset} className="chip" style={{ fontSize: 11, letterSpacing: 1, ...(confirmReset ? { background: C.warn, color: C.bg, border: "none" } : {}) }}>
+              {confirmReset ? "TAP AGAIN TO ERASE EVERYTHING" : "RESET ALL PROGRESS"}
+            </button>
           </div>
         )}
 

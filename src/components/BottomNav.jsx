@@ -23,9 +23,10 @@ const ICONS = {
 export function BottomNav({ tab, onChange }) {
   const items = ["plan", "stats", "history"];
   return (
-    <nav style={{
+    <nav aria-label="Main" style={{
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
       background: "rgba(18,20,25,0.85)", backdropFilter: "blur(14px)",
+      WebkitBackdropFilter: "blur(14px)",
       borderTop: `1px solid ${C.line}`,
       paddingBottom: "env(safe-area-inset-bottom)",
     }}>
@@ -34,17 +35,22 @@ export function BottomNav({ tab, onChange }) {
           const active = tab === t;
           const color = active ? C.accent : C.dim;
           return (
-            <button key={t} onClick={() => onChange(t)}
+            <button key={t} onClick={() => onChange(t)} aria-current={active ? "page" : undefined}
               style={{
                 flex: 1, background: "none", border: "none", cursor: "pointer",
-                padding: "10px 0 8px", display: "flex", flexDirection: "column",
+                padding: "8px 0 7px", display: "flex", flexDirection: "column",
                 alignItems: "center", gap: 3, color,
               }}>
-              <span style={{ transform: active ? "translateY(-1px)" : "none", transition: "transform .2s" }}>
+              <span style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                padding: "4px 16px", borderRadius: 999,
+                background: active ? `${C.accent}1c` : "transparent",
+                transform: active ? "translateY(-1px)" : "none",
+                transition: "transform .2s, background .2s",
+              }}>
                 {ICONS[t](color)}
               </span>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{t}</span>
-              <span style={{ width: 4, height: 4, borderRadius: 4, background: active ? C.accent : "transparent" }} />
+              <span style={{ fontSize: 10, fontWeight: active ? 800 : 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{t}</span>
             </button>
           );
         })}
