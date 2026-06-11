@@ -6,6 +6,7 @@ import { haptic } from "../celebrate.js";
 import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 import { loadSettings, saveSettings } from "../storage.js";
+import { useHeartRate, hrSupported } from "../hr.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
 const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
@@ -110,6 +111,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
     return n;
   });
 
+  // optional Bluetooth heart-rate monitor (chest strap / watch broadcasting HR)
+  const hr = useHeartRate();
+  const hrAgg = useRef({ sum: 0, n: 0, max: 0 });
+  useEffect(() => {
+    if (t.status === "tracking" && hr.bpm > 0) {
+      const a = hrAgg.current;
+      a.sum += hr.bpm; a.n += 1; a.max = Math.max(a.max, hr.bpm);
+    }
+  }, [hr.bpm, t.status]);
+  const hrAvg = hrAgg.current.n ? Math.round(hrAgg.current.sum / hrAgg.current.n) : 0;
+  const hrMax = hrAgg.current.max;
+
   // spoken / beep cue whenever a new km split is recorded
   const prevSplits = useRef(0);
   useEffect(() => {
@@ -164,6 +177,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   useEffect(() => () => clearInterval(countIv.current), []);
   const beginRun = async () => {
     haptic(15); primeAudio();
+    hrAgg.current = { sum: 0, n: 0, max: 0 };
     await ensureLocationPermission();
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);
@@ -193,6 +207,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
       elev: Math.round(t.elevGainM),
       kcal: Math.round(kcal),
       ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}),
+      ...(hrAvg > 0 ? { hrAvg, hrMax } : {}),
     });
     haptic([15, 30, 15]);
   };
@@ -259,6 +274,21 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
               <StepCard label="WEIGHT" unit="KG" val={weightKg} set={setWeight} />
             </div>
             <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>Weight is only used for the calorie estimate.</div>
+            {hrSupported() && (
+              <div style={{ marginTop: 12 }}>
+                {hr.status === "connected" ? (
+                  <Toggle on label={`${hr.deviceName}${hr.bpm ? ` · ${hr.bpm} bpm` : ""} — tap to disconnect`}
+                    onClick={() => { hr.disconnect(); haptic(6); }} />
+                ) : (
+                  <Toggle on={false} label={hr.status === "connecting" ? "Connecting…" : "Connect heart-rate monitor"}
+                    onClick={() => { hr.connect(); haptic(6); }} />
+                )}
+                <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
+                  Works with any Bluetooth heart-rate device. Galaxy Watch: install a free
+                  HR-broadcast app on the watch (e.g. “Heart for Bluetooth”), start it, then connect here.
+                </div>
+              </div>
+            )}
           </div>
           <button onClick={beginRun} className="chip cta disp"
             style={{ padding: "16px 0", fontSize: 16, fontWeight: 700, maxWidth: 280, margin: "8px auto 0", width: "100%", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -293,11 +323,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
             <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
           </div>
-          <div style={{ display: "flex", marginBottom: 18 }}>
+          <div style={{ display: "flex", marginBottom: hr.status === "connected" ? 14 : 18 }}>
             <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
             <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
             <Big label="KCAL" value={Math.round(kcal)} />
           </div>
+          {hr.status === "connected" && (
+            <div style={{ display: "flex", marginBottom: 18 }}>
+              <Big label="HEART RATE" value={hr.bpm ?? "--"} color={C.warn} />
+              <Big label="AVG HR" value={hrAvg || "--"} />
+              <Big label="MAX HR" value={hrMax || "--"} />
+            </div>
+          )}
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
@@ -336,6 +373,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <Big label="KCAL" value={Math.round(kcal)} />
             <Big label="TOP SPEED" value={t.maxSpeedMs ? `${(t.maxSpeedMs * 3.6).toFixed(1)}` : "--"} />
           </div>
+          {hrAvg > 0 && (
+            <div style={{ display: "flex", marginBottom: 16 }}>
+              <Big label="AVG HR" value={hrAvg} color={C.warn} />
+              <Big label="MAX HR" value={hrMax} />
+            </div>
+          )}
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
