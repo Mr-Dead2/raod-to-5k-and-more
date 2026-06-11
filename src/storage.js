@@ -2,11 +2,20 @@
 // localStorage so the app works as a real PWA on a phone/desktop.
 // If you ever change the stored shape incompatibly, bump the suffix (v2 -> v3).
 const KEY = "run5k:v2";
+const LEGACY_KEYS = ["run5k:v1", "run5k"]; // older installs — migrated on first load
 
 export function loadLog() {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (raw) return JSON.parse(raw);
+    for (const k of LEGACY_KEYS) {
+      const old = localStorage.getItem(k);
+      if (old) {
+        const log = JSON.parse(old);
+        if (log && typeof log === "object") { localStorage.setItem(KEY, old); return log; }
+      }
+    }
+    return {};
   } catch {
     return {};
   }

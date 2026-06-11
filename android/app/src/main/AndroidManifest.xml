@@ -37,6 +37,13 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Background run tracking: the background-geolocation plugin runs a
+         location foreground service (with a persistent notification) so GPS
+         keeps recording with the screen off or another app in front.
+         Also declared by the plugin's own manifest; listed here for clarity. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
     <!-- Reminders / notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

@@ -55,7 +55,6 @@ export function StreakGrid({ cells }) {
                     aspectRatio: "1", borderRadius: 7, background: bg,
                     border: `1.5px solid ${border}`, display: "flex",
                     alignItems: "center", justifyContent: "center",
-                    boxShadow: c.isToday ? `0 0 10px -2px ${C.accent}` : "none",
                     animation: "cellIn .4s ease both", animationDelay: `${(r * 7 + i) * 0.018}s`,
                   }}>
                   {c.done && <span style={{ color: C.bg, fontSize: 11, fontWeight: 900 }}>✓</span>}

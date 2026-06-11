@@ -1,7 +1,9 @@
-// Live GPS run tracking, dependency-free. Wraps the Geolocation API in a small
-// state machine and exposes elapsed time, distance, pace, route points and
-// per-km splits. Pure browser APIs — no map library, no backend.
+// Live GPS run tracking, dependency-free. Wraps a location watch (src/geo.js:
+// web Geolocation API, or a native background watcher in the Android app) in a
+// small state machine and exposes elapsed time, distance, pace, route points
+// and per-km splits. No map library, no backend.
 import { useState, useRef, useCallback, useEffect } from "react";
+import { startLocationWatch } from "./geo.js";
 
 // Distance between two {lat,lng} points in metres (Haversine).
 export function haversine(a, b) {
@@ -14,7 +16,12 @@ export function haversine(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-const STOP_MS = 7000; // auto-pause after this long without real movement
+const STOP_MS = 7000;      // auto-pause after this long without real movement
+const MAX_ACCURACY_M = 35; // ignore fixes with worse horizontal accuracy
+const MAX_SPEED_MS = 11;   // reject implausible jumps (≈ 1:31/km pace)
+const MIN_STEP_M = 2;      // reject sub-jitter movement
+const PROCESS_NOISE = 3;   // Kalman process noise — assumed runner speed, m/s
+const CLIMB_HYST_M = 2;    // GPS altitude is noisy — only count climbs past this
 
 export function useRunTracker(opts = {}) {
   const optsRef = useRef(opts);
@@ -28,12 +35,15 @@ export function useRunTracker(opts = {}) {
   const [splits, setSplits] = useState([]);      // seconds per completed km
   const [accuracy, setAccuracy] = useState(null);
   const [error, setError] = useState(null);
+  const [elevGainM, setElevGainM] = useState(0); // total metres climbed
+  const [maxSpeedMs, setMaxSpeedMs] = useState(0);
+  const [phaseDist, setPhaseDist] = useState({ run: 0, walk: 0 }); // metres per interval phase
 
   const statusRef = useRef(status);
   statusRef.current = status;
   const autoPausedRef = useRef(false);
 
-  const watchId = useRef(null);
+  const watch = useRef(null);    // { stop() } from startLocationWatch
   const ticker = useRef(null);
   const startedAt = useRef(0);   // ms timestamp the current running segment began
   const baseMs = useRef(0);      // accumulated ms from previous segments
@@ -42,6 +52,11 @@ export function useRunTracker(opts = {}) {
   const distRef = useRef(0);     // metres
   const nextKm = useRef(1);
   const splitBase = useRef(0);   // elapsed seconds at the last km marker
+  const kalman = useRef(null);   // { lat, lng, variance, t } — smoothing state
+  const alt = useRef(null);      // { smooth, ref } — EMA altitude + climb reference
+  const elevRef = useRef(0);
+  const maxSpeedRef = useRef(0);
+  const phaseDistRef = useRef({ run: 0, walk: 0 });
   const wakeLock = useRef(null);
 
   // elapsed time, frozen while auto-paused
@@ -60,16 +75,37 @@ export function useRunTracker(opts = {}) {
 
   const setAuto = (v) => { autoPausedRef.current = v; setAutoPaused(v); };
 
-  const onPos = useCallback((pos) => {
-    setAccuracy(pos.coords.accuracy);
+  // One-dimensional Kalman filter per axis, weighted by the fix's reported
+  // accuracy: noisy fixes barely move the estimate, sharp ones pull it hard.
+  // Smooths GPS jitter that would otherwise zig-zag and inflate distance.
+  const smooth = (f) => {
+    const acc = Math.max(f.accuracy || 10, 3);
+    const k = kalman.current;
+    if (!k) {
+      kalman.current = { lat: f.lat, lng: f.lng, variance: acc * acc, t: f.t };
+    } else {
+      const dt = Math.max((f.t - k.t) / 1000, 0);
+      k.variance += dt * PROCESS_NOISE * PROCESS_NOISE;
+      const gain = k.variance / (k.variance + acc * acc);
+      k.lat += gain * (f.lat - k.lat);
+      k.lng += gain * (f.lng - k.lng);
+      k.variance *= 1 - gain;
+      k.t = f.t;
+    }
+    return { lat: kalman.current.lat, lng: kalman.current.lng, t: f.t };
+  };
+
+  const onFix = useCallback((f) => {
+    setAccuracy(f.accuracy);
     if (statusRef.current !== "tracking") return;
-    const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: Date.now() };
-    if (!last.current) { last.current = p; lastMoveAt.current = p.t; setPoints([p]); return; }
+    if (f.accuracy != null && f.accuracy > MAX_ACCURACY_M) return; // wait for a usable fix
+
+    const p = smooth(f);
+    if (!last.current) { last.current = p; lastMoveAt.current = p.t; setPoints((pts) => [...pts, p]); return; }
 
     const d = haversine(last.current, p);
     const dt = Math.max((p.t - last.current.t) / 1000, 0.001);
-    const speed = d / dt; // m/s
-    if (d < 2 || speed > 11) return; // reject jitter / implausible jumps
+    if (d < MIN_STEP_M || d / dt > MAX_SPEED_MS) return; // reject jitter / implausible jumps
 
     // real movement: if we were auto-paused, resume the clock now
     if (autoPausedRef.current) { startedAt.current = Date.now(); setAuto(false); }
@@ -80,6 +116,29 @@ export function useRunTracker(opts = {}) {
     last.current = p;
     setPoints((pts) => [...pts, p]);
 
+    const segSpeed = d / dt;
+    if (segSpeed > maxSpeedRef.current) { maxSpeedRef.current = segSpeed; setMaxSpeedMs(segSpeed); }
+
+    // elevation gain: EMA-smoothed altitude, climbs counted with hysteresis
+    if (f.alt != null && isFinite(f.alt)) {
+      if (!alt.current) alt.current = { smooth: f.alt, ref: f.alt };
+      else {
+        const a = alt.current;
+        a.smooth += 0.3 * (f.alt - a.smooth);
+        if (a.smooth - a.ref >= CLIMB_HYST_M) { elevRef.current += a.smooth - a.ref; a.ref = a.smooth; setElevGainM(elevRef.current); }
+        else if (a.smooth < a.ref) a.ref = a.smooth;
+      }
+    }
+
+    // bucket distance into the current run/walk interval phase, if any
+    const iv = optsRef.current.interval;
+    if (iv && iv.runSec > 0 && iv.walkSec > 0) {
+      const pos = (liveElapsed() / 1000) % (iv.runSec + iv.walkSec);
+      const key = pos < iv.runSec ? "run" : "walk";
+      phaseDistRef.current = { ...phaseDistRef.current, [key]: phaseDistRef.current[key] + d };
+      setPhaseDist(phaseDistRef.current);
+    }
+
     while (distRef.current / 1000 >= nextKm.current) {
       const sec = liveElapsed() / 1000;
       const split = sec - splitBase.current;
@@ -87,17 +146,16 @@ export function useRunTracker(opts = {}) {
       nextKm.current += 1;
       setSplits((s) => [...s, split]);
     }
+    // timers throttle in the background; fixes keep arriving, so use them to
+    // keep elapsed time (and the run/walk interval cues) up to date
+    setElapsedMs(liveElapsed());
   }, []);
 
   const startWatch = useCallback(() => {
-    if (!("geolocation" in navigator)) { setError("This device has no GPS / location support."); return false; }
-    watchId.current = navigator.geolocation.watchPosition(
-      onPos,
-      (e) => setError(e.code === 1 ? "Location permission denied — allow it to track your run." : "Couldn't get a GPS signal. Head outside with a clear view of the sky."),
-      { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
-    );
-    return true;
-  }, [onPos]);
+    watch.current = startLocationWatch(onFix, setError);
+    return watch.current != null;
+  }, [onFix]);
+  const stopWatch = () => { watch.current?.stop(); watch.current = null; };
 
   const startTicker = useCallback(() => {
     clearInterval(ticker.current);
@@ -116,8 +174,11 @@ export function useRunTracker(opts = {}) {
     setError(null);
     if (!startWatch()) return;
     distRef.current = 0; nextKm.current = 1; splitBase.current = 0; last.current = null; baseMs.current = 0;
+    kalman.current = null; alt.current = null;
+    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 };
     lastMoveAt.current = Date.now(); setAuto(false);
     setDistanceM(0); setSplits([]); setPoints([]); setElapsedMs(0);
+    setElevGainM(0); setMaxSpeedMs(0); setPhaseDist({ run: 0, walk: 0 });
     startedAt.current = Date.now();
     setStatus("tracking");
     acquireWake();
@@ -135,6 +196,11 @@ export function useRunTracker(opts = {}) {
   const resume = useCallback(() => {
     startedAt.current = Date.now();
     lastMoveAt.current = Date.now();
+    // restart the segment from wherever the runner is now, so ground covered
+    // while paused doesn't count and a stale estimate can't cause a jump
+    last.current = null;
+    kalman.current = null;
+    alt.current = null;
     setAuto(false);
     setStatus("tracking");
     acquireWake();
@@ -146,22 +212,27 @@ export function useRunTracker(opts = {}) {
     setElapsedMs(baseMs.current);
     setAuto(false);
     clearInterval(ticker.current);
-    if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current);
-    watchId.current = null;
+    stopWatch();
     releaseWake();
     setStatus("finished");
   }, [releaseWake]);
 
   const reset = useCallback(() => {
     clearInterval(ticker.current);
-    if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current);
-    watchId.current = null;
+    stopWatch();
     releaseWake();
     setAuto(false);
+    kalman.current = null; alt.current = null;
+    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 };
     setStatus("idle"); setElapsedMs(0); setDistanceM(0); setPoints([]); setSplits([]); setError(null); setAccuracy(null);
+    setElevGainM(0); setMaxSpeedMs(0); setPhaseDist({ run: 0, walk: 0 });
   }, [releaseWake]);
 
-  useEffect(() => () => { clearInterval(ticker.current); if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current); releaseWake(); }, [releaseWake]);
+  useEffect(() => () => { clearInterval(ticker.current); stopWatch(); releaseWake(); }, [releaseWake]);
 
-  return { status, autoPaused, elapsedMs, distanceM, points, splits, accuracy, error, start, pause, resume, finish, reset };
+  return {
+    status, autoPaused, elapsedMs, distanceM, points, splits, accuracy, error,
+    elevGainM, maxSpeedMs, phaseDist,
+    start, pause, resume, finish, reset,
+  };
 }
