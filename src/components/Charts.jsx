@@ -1,40 +1,6 @@
 import React from "react";
 import { C, typeColor } from "../data.js";
 
-// Draws a GPS route as a normalized SVG polyline (north-up, aspect-corrected).
-// `points` is [{lat,lng}]. No map tiles — just the shape of the run.
-export function RouteMap({ points, height = 170, stroke = C.accent }) {
-  if (!points || points.length < 2) {
-    return (
-      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, background: C.bg, borderRadius: 12 }}>
-        No route yet — start moving to draw your path.
-      </div>
-    );
-  }
-  const lats = points.map((p) => p.lat);
-  const lngs = points.map((p) => p.lng);
-  const meanLat = lats.reduce((a, b) => a + b, 0) / lats.length;
-  const kx = Math.cos((meanLat * Math.PI) / 180); // metres-per-degree longitude correction
-  const xs = lngs.map((l) => l * kx);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...lats), maxY = Math.max(...lats);
-  const dataW = Math.max(maxX - minX, 1e-6), dataH = Math.max(maxY - minY, 1e-6);
-  const VB = 300, pad = 22;
-  const scale = Math.min((VB - 2 * pad) / dataW, (VB - 2 * pad) / dataH);
-  const offX = (VB - dataW * scale) / 2, offY = (VB - dataH * scale) / 2;
-  const proj = (lng, lat) => [offX + (lng * kx - minX) * scale, VB - (offY + (lat - minY) * scale)];
-  const d = points.map((p, i) => { const [x, y] = proj(p.lng, p.lat); return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`; }).join(" ");
-  const [sx, sy] = proj(points[0].lng, points[0].lat);
-  const [ex, ey] = proj(points[points.length - 1].lng, points[points.length - 1].lat);
-  return (
-    <svg viewBox={`0 0 ${VB} ${VB}`} width="100%" height={height} style={{ background: C.bg, borderRadius: 12 }} role="img" aria-label="Run route">
-      <path d={d} fill="none" stroke={stroke} strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={sx} cy={sy} r="6" fill={C.bg} stroke={stroke} strokeWidth="3" />
-      <circle cx={ex} cy={ey} r="6" fill={stroke} />
-    </svg>
-  );
-}
-
 // 4×7 calendar grid of the plan. Each cell reflects a day's status.
 export function StreakGrid({ cells }) {
   const rows = [0, 1, 2, 3];

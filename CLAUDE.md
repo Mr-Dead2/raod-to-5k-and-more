@@ -130,10 +130,13 @@ front — the other headline reason to go native.
   analytically from elapsed time and the cycle) and a live run/walk
   breakdown card. `src/components/RunTracker.jsx` is the full-screen
   overlay (idle → tracking/paused → finished) that owns the hook; the route is
-  drawn by `RouteMap` (Charts.jsx) as a north-up, aspect-corrected SVG polyline
-  (no map tiles). On save it calls back into App, which writes a tracked session
+  drawn on a real map by `src/components/LiveMap.jsx` — Leaflet over CARTO's
+  dark OSM raster tiles (attribution required, no API key; `follow` mode keeps
+  the runner centred live, `interactive={false}` makes static thumbnails).
+  Tiles need internet; offline the accent polyline still draws on the dark
+  background. On save it calls back into App, which writes a tracked session
   via `update()` (`{ done, km, min, date, tracked, route, splits, durMs, elev,
-  kcal, runKm, walkKm }`); the
+  kcal, runKm, walkKm, hrAvg, hrMax }`); the
   route is downsampled to ≤250 `[lat,lng]` pairs to keep localStorage small.
   History renders the route thumbnail, split chips and extra-metric chips
   (elevation / kcal / run vs walk km) for tracked runs. The overlay
