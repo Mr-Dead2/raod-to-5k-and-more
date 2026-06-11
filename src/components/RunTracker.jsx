@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { C } from "../data.js";
-import { RouteMap } from "./Charts.jsx";
+import { LiveMap } from "./LiveMap.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
 import { ensureLocationPermission, isNative } from "../native.js";
@@ -338,7 +338,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-          <RouteMap points={t.points} height={190} />
+          <LiveMap points={t.points} height={230} follow />
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
@@ -382,7 +382,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-          <RouteMap points={t.points} height={200} />
+          <LiveMap points={t.points} height={220} />
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>

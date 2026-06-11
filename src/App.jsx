@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { WEEKS, FLAT, TOTAL, C, typeColor } from "./data.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
-import { WeeklyBars, CumulativeArea, StreakGrid, RouteMap } from "./components/Charts.jsx";
+import { WeeklyBars, CumulativeArea, StreakGrid } from "./components/Charts.jsx";
+import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
@@ -381,6 +382,10 @@ export default function App() {
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
         html, body { background:${C.bg}; }
+        /* Leaflet chrome matched to the dark theme */
+        .leaflet-container { background:${C.bg}; font-family:'Manrope', system-ui, sans-serif; }
+        .leaflet-control-attribution { background: rgba(11,12,15,.72) !important; color:#5f6673 !important; font-size:9px !important; }
+        .leaflet-control-attribution a { color:#828a98 !important; }
         /* flat, quietly elevated cards — one surface, one hairline, soft shadow */
         .card { background:${C.surface}; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
         .card.glow { box-shadow: 0 0 0 1px ${C.accent}; }
@@ -616,7 +621,7 @@ export default function App() {
                       {(extras.length > 0 || (h.e.route && h.e.route.length > 1)) && (
                         <div style={{ marginTop: 10 }}>
                           {h.e.route && h.e.route.length > 1 && (
-                            <RouteMap points={h.e.route.map(([lat, lng]) => ({ lat, lng }))} height={130} />
+                            <LiveMap points={h.e.route} height={150} interactive={false} />
                           )}
                           {extras.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
