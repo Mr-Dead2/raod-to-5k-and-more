@@ -160,8 +160,16 @@ front — the other headline reason to go native.
 ## Styling conventions
 
 - All styling is inline `style={{}}` objects plus one `<style>` block in
-  `App.jsx` for fonts, keyframes, and utility classes (`.syne`, `.num`, `.row`,
-  `.glow`, `.rise`, `.inp`, `.chip`, `.sw`). No CSS file or framework.
-- Fonts: `Syne` (headings/numbers via `.syne`/`.num`) and `Manrope` (body), from
-  Google Fonts in the `<style>` block. Safe-area insets are handled via
-  `env(safe-area-inset-*)` for notched phones.
+  `App.jsx` for fonts, keyframes, and utility classes (`.disp`, `.num`, `.row`,
+  `.glow`, `.rise`, `.inp`, `.chip`, `.sw`, `.card`, `.cta`). No CSS file or
+  framework.
+- Fonts: `Space Grotesk` (display headings/numbers via `.disp`/`.num`) and
+  `Manrope` (body), from Google Fonts in the `<style>` block. Safe-area insets
+  are handled via `env(safe-area-inset-*)` for notched phones.
+- Design language: flat dark surfaces with hairline borders and soft shadows —
+  no gradients, no glow/pulse effects. The lime accent is used sparingly
+  (primary `.cta` action, active states, data highlights). UI chrome uses the
+  inline SVG `Icon` set in `App.jsx` (and BottomNav's icons), never emoji;
+  emoji are reserved for celebratory content (achievement badges, toasts).
+  Buttons are sentence case; tiny letter-spaced ALL-CAPS is only for section
+  labels.

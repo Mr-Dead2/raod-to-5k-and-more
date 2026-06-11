@@ -40,11 +40,9 @@ export function BottomNav({ tab, onChange }) {
                 padding: "10px 0 8px", display: "flex", flexDirection: "column",
                 alignItems: "center", gap: 3, color,
               }}>
-              <span style={{ transform: active ? "translateY(-1px)" : "none", transition: "transform .2s" }}>
-                {ICONS[t](color)}
-              </span>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{t}</span>
-              <span style={{ width: 4, height: 4, borderRadius: 4, background: active ? C.accent : "transparent" }} />
+              {ICONS[t](color)}
+              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, textTransform: "capitalize" }}>{t}</span>
+              <span style={{ width: 14, height: 3, borderRadius: 3, background: active ? C.accent : "transparent", transition: "background .2s" }} />
             </button>
           );
         })}

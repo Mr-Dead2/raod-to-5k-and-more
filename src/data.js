@@ -45,8 +45,8 @@ export const TOTAL = FLAT.length;
 
 // Color palette — use these tokens instead of hardcoding hex values.
 export const C = {
-  bg: "#0c0d10", surface: "#15171c", surface2: "#1b1e25", line: "#2a2e38",
-  text: "#f1f3ee", dim: "#878d99", accent: "#ccff33", run: "#ccff33",
-  easy: "#43e0c4", rest: "#5a6170", warn: "#ff6a3d",
+  bg: "#0b0c0f", surface: "#15171c", surface2: "#1c1f26", line: "#272b34",
+  text: "#f2f3ef", dim: "#9298a4", accent: "#c8f73c", run: "#c8f73c",
+  easy: "#45dcc2", rest: "#5c6373", warn: "#ff6a3d",
 };
 export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
