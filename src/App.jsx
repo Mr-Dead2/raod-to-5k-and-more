@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { shareRunCard } from "./share.js";
+import { RouteReplay } from "./components/RouteReplay.jsx";
 import { WEEKS, FLAT, TOTAL, C, typeColor, ACCENTS, applyAccent } from "./data.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
 import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
@@ -86,6 +87,7 @@ export default function App() {
   const [accent, setAccent] = useState("lime");
   const [histFilter, setHistFilter] = useState("all"); // all | run | gps
   const [openWeeks, setOpenWeeks] = useState({}); // completed weeks expanded by tap
+  const [replayRun, setReplayRun] = useState(null); // run object being replayed
 
   // reminders
   const [remOn, setRemOn] = useState(false);
@@ -725,7 +727,13 @@ export default function App() {
                       {(extras.length > 0 || (h.e.route && h.e.route.length > 1)) && (
                         <div style={{ marginTop: 10 }}>
                           {h.e.route && h.e.route.length > 1 && (
-                            <LiveMap points={h.e.route} height={150} interactive={false} />
+                            <div style={{ position: "relative" }}>
+                              <LiveMap points={h.e.route} height={150} interactive={false} />
+                              <button onClick={() => { haptic(8); setReplayRun({ route: h.e.route, km: h.e.km, durMs: h.e.durMs }); }}
+                                className="chip" style={{ position: "absolute", bottom: 8, right: 8, zIndex: 500, background: "rgba(11,12,15,0.82)", color: C.accent, border: `1px solid ${C.accent}55`, padding: "5px 11px", fontSize: 11, fontWeight: 700 }}>
+                                ▶ Replay
+                              </button>
+                            </div>
                           )}
                           {extras.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
@@ -926,6 +934,10 @@ export default function App() {
           onSave={saveTrackedRun}
           onClose={() => setTrackerOpen(false)}
         />
+      )}
+
+      {replayRun && (
+        <RouteReplay run={replayRun} onClose={() => setReplayRun(null)} />
       )}
     </div>
   );
