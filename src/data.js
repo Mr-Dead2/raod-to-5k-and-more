@@ -50,3 +50,18 @@ export const C = {
   easy: "#45dcc2", rest: "#5c6373", warn: "#ff6a3d",
 };
 export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
+
+// Selectable accent themes. Everything reads colors from `C` at render time,
+// so switching is just mutating the palette and re-rendering.
+export const ACCENTS = [
+  { id: "lime", name: "Lime", accent: "#c8f73c" },
+  { id: "sky", name: "Sky", accent: "#5cc8ff" },
+  { id: "gold", name: "Gold", accent: "#ffd84d" },
+  { id: "violet", name: "Violet", accent: "#c08bff" },
+];
+export function applyAccent(id) {
+  const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
+  C.accent = a.accent;
+  C.run = a.accent; // run sessions are highlighted in the accent colour
+  return a.id;
+}
