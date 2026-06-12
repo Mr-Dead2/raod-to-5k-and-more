@@ -8,6 +8,10 @@ export const ACHIEVEMENTS = [
   { id: "stitch", icon: "🛡️", title: "Stitch Slayer", desc: "3 logged runs with no side stitch", test: (c) => c.stitchlessRuns >= 3 },
   { id: "speed", icon: "⚡", title: "Speedster", desc: "Run faster than 6:00 / km", test: (c) => c.bestPaceSec > 0 && c.bestPaceSec < 360 },
   { id: "twenty", icon: "🛣️", title: "20 KM Club", desc: "Log 20 km in total", test: (c) => c.kmLogged >= 20 },
+  { id: "early", icon: "🌅", title: "Early Bird", desc: "Finish a session before 8 am", test: (c) => c.earlyRuns >= 1 },
+  { id: "owl", icon: "🦉", title: "Night Owl", desc: "Finish a session after 9 pm", test: (c) => c.lateRuns >= 1 },
+  { id: "streak7", icon: "⛓️", title: "Unbroken", desc: "Hit a 7-day streak", test: (c) => c.best >= 7 },
+  { id: "marathon", icon: "🗺️", title: "Marathon Month", desc: "Log 42.2 km in total", test: (c) => c.kmLogged >= 42.2 },
   { id: "complete", icon: "🎖️", title: "Mission Complete", desc: "Finish the whole 4-week plan", test: (c) => c.done >= 28 },
 ];
 

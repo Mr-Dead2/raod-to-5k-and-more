@@ -65,6 +65,38 @@ export function WeeklyBars({ data }) {
   );
 }
 
+// Pace per run over time. Lower pace = faster, so the Y axis is inverted
+// (the line climbing means you're getting quicker).
+export function PaceTrend({ points }) {
+  const W = 320, H = 140, pad = 22;
+  if (points.length < 2) {
+    return (
+      <div style={{ height: 120, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim }}>
+        Log time + distance on two runs to see your pace trend.
+      </div>
+    );
+  }
+  const secs = points.map((p) => p.sec);
+  const min = Math.min(...secs), max = Math.max(...secs);
+  const span = Math.max(max - min, 30); // keep near-flat trends readable
+  const x = (i) => pad + (i / (points.length - 1)) * (W - pad * 2);
+  const y = (v) => pad + ((v - min) / span) * (H - pad * 2 - 14);
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.sec).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Pace per run over time">
+      <path d={line} fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {points.map((p, i) => (
+        <circle key={i} cx={x(i)} cy={y(p.sec)} r={p.sec === min ? 4 : 2.5} fill={p.sec === min ? C.accent : C.bg} stroke={C.accent} strokeWidth="2" />
+      ))}
+      <text x={pad} y={H - 6} fontSize="10" fill={C.dim} fontWeight="700">{points.length} runs</text>
+      <text x={W - pad} y={H - 6} textAnchor="end" fontSize="10" fill={C.accent} fontWeight="700">
+        best {fmt(min)} /km
+      </text>
+    </svg>
+  );
+}
+
 // Cumulative distance area chart over completed sessions (in order).
 export function CumulativeArea({ points }) {
   const W = 320, H = 140, pad = 22;

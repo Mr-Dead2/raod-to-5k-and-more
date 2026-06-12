@@ -74,12 +74,22 @@ front — the other headline reason to go native.
   static plan to user progress, so any progress read/write must use that exact
   format. `C` is the entire color palette; use its tokens (`C.accent`, `C.run`,
   `C.easy`, `C.rest`, …) and `typeColor(type)` instead of hardcoding hex.
+  `ACCENTS`/`applyAccent(id)` swap the accent (and `run`) colour by mutating `C`
+  in place — everything reads `C` at render time, so a re-render is enough.
+  `main.jsx` applies the persisted choice (settings key `accent`) before first
+  render; the Stats "Appearance" card switches it live.
 - **`src/App.jsx` — one stateful component, three tabs (`plan | stats |
   history`).** All user progress lives in a single `log` object keyed by the
-  `w{n}d{i}` keys; each entry is a partial `{ done, km, min, stitch, note, date
-  }`. `update(key, patch)` shallow-merges and persists; it stamps `date` the
+  `w{n}d{i}` keys; each entry is a partial `{ done, km, min, stitch, note, feel,
+  date }` (`feel` is a 1–5 effort rating shown via the `FEELS` emoji scale).
+  `update(key, patch)` shallow-merges and persists; it stamps `date` the
   first time a day is marked done (history/charts depend on this). `stats`,
-  `weekly`, `history`, and `cumulative` are all `useMemo`s derived from `log`.
+  `weekly`, `history`, `paceTrend`, and `cumulative` are all `useMemo`s derived
+  from `log`. The Plan tab leads with a hero card (today's session when
+  `startDate` maps one, else the next unfinished day) carrying the GPS-start and
+  mark-done actions; fully completed weeks render collapsed (tap the header to
+  expand) and every week header has a thin progress bar. History has filter
+  chips (all / runs / GPS) plus a totals summary line.
 - **Persistence is split by access pattern.** Run progress → `localStorage`
   (`src/storage.js`, key `run5k:v2`). Reminder settings → **IndexedDB**
   (`src/idb.js`, a tiny dependency-free KV store) because the service worker
@@ -96,8 +106,9 @@ front — the other headline reason to go native.
   fully closed.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
-  distance total), and `StreakGrid` (a 4×7 calendar coloured by day status).
-  They are purely presentational — App computes the arrays/cells.
+  distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and
+  `StreakGrid` (a 4×7 calendar coloured by day status). They are purely
+  presentational — App computes the arrays/cells.
 - **Start date / "today" (`src/storage.js` settings, key `run5k:settings`).** An
   optional `startDate` (a `YYYY-MM-DD` string) maps each plan day to a calendar
   date; `todayIndexOf`/`dateForDay` in `App.jsx` derive today's flat index, the

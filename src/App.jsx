@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { WEEKS, FLAT, TOTAL, C, typeColor } from "./data.js";
+import { WEEKS, FLAT, TOTAL, C, typeColor, ACCENTS, applyAccent } from "./data.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
-import { WeeklyBars, CumulativeArea, StreakGrid } from "./components/Charts.jsx";
+import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
 import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
@@ -41,6 +41,10 @@ const paceSec = (min, km) => {
   return (m * 60) / k;
 };
 const fmtPace = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : null);
+const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`);
+
+// 1–5 effort scale logged per session (user content, like the badge emoji).
+const FEELS = ["😖", "😕", "🙂", "😄", "🤩"];
 
 const startOfDay = (iso) => { const d = new Date(iso + "T00:00:00"); d.setHours(0, 0, 0, 0); return d; };
 const todayIndexOf = (iso) => {
@@ -78,6 +82,9 @@ export default function App() {
   const [startDate, setStartDate] = useState("");
   const [toast, setToast] = useState(null);
   const [trackerOpen, setTrackerOpen] = useState(false);
+  const [accent, setAccent] = useState("lime");
+  const [histFilter, setHistFilter] = useState("all"); // all | run | gps
+  const [openWeeks, setOpenWeeks] = useState({}); // completed weeks expanded by tap
 
   // reminders
   const [remOn, setRemOn] = useState(false);
@@ -94,7 +101,9 @@ export default function App() {
 
   useEffect(() => {
     setLog(loadLog());
-    setStartDate(loadSettings().startDate || "");
+    const s = loadSettings();
+    setStartDate(s.startDate || "");
+    setAccent(applyAccent(s.accent));
     setLoaded(true);
     (async () => {
       const r = await loadReminder();
@@ -149,6 +158,12 @@ export default function App() {
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
+  const setAccentTheme = (id) => {
+    setAccent(applyAccent(id)); // mutates C; the state change re-renders everything with it
+    saveSettings({ ...loadSettings(), accent: id });
+    haptic(8);
+  };
+
   const importRef = useRef(null);
   const exportData = async () => {
     haptic(8);
@@ -194,6 +209,7 @@ export default function App() {
         }
         persist(merged);
         if (backup.settings.startDate) saveStart(backup.settings.startDate);
+        if (backup.settings.accent) setAccentTheme(backup.settings.accent);
         haptic([10, 30, 10]);
         setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}`, label: "BACKUP" });
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
@@ -210,7 +226,7 @@ export default function App() {
 
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
-    let timeSum = 0, paceKmSum = 0;
+    let timeSum = 0, paceKmSum = 0, minTotal = 0, earlyRuns = 0, lateRuns = 0;
     FLAT.forEach((f) => {
       const e = log[f.key];
       if (!e) return;
@@ -221,13 +237,23 @@ export default function App() {
       const ps = paceSec(e.min, e.km);
       if (ps && (bestPaceSec === 0 || ps < bestPaceSec)) bestPaceSec = ps;
       const mm = parseFloat(e.min);
+      if (mm > 0) minTotal += mm;
       if (mm > 0 && k > 0) { timeSum += mm * 60; paceKmSum += k; }
+      if (e.done && e.date) {
+        const h = new Date(e.date).getHours();
+        if (h < 8) earlyRuns++; else if (h >= 21) lateRuns++;
+      }
     });
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
+    // streak the user is on right now: consecutive done days ending at the last done day
+    let lastDone = -1;
+    FLAT.forEach((f, i) => { if (log[f.key] && log[f.key].done) lastDone = i; });
+    let curStreak = 0;
+    for (let i = lastDone; i >= 0 && log[FLAT[i].key] && log[FLAT[i].key].done; i--) curStreak++;
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
     const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
-    return { kmLogged, done, stitches, runsLogged, best, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, projected5kSec: avgPaceSec * 5 };
+    return { kmLogged, done, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5 };
   }, [log]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
@@ -258,6 +284,11 @@ export default function App() {
     return items;
   }, [log]);
 
+  const paceTrend = useMemo(() => history
+    .filter((h) => paceSec(h.e.min, h.e.km) > 0)
+    .slice().sort((a, b) => (a.e.date || "").localeCompare(b.e.date || ""))
+    .map((h) => ({ sec: paceSec(h.e.min, h.e.km) })), [history]);
+
   const cumulative = useMemo(() => {
     const runs = history.filter((h) => parseFloat(h.e.km) > 0).slice()
       .sort((a, b) => (a.e.date || "").localeCompare(b.e.date || ""));
@@ -286,6 +317,11 @@ export default function App() {
   // which session a tracked run defaults to saving into
   const todayKey = startDate && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx].key : null;
   const trackDefaultKey = todayKey || (nextUp ? nextUp.key : FLAT[0].key);
+
+  // Plan-tab hero card: today's session when a start date maps one, else the next unfinished day
+  const heroIdx = todayKey ? todayIdx : -1;
+  const hero = heroIdx >= 0 ? FLAT[heroIdx] : nextUp;
+  const heroEntry = hero ? log[hero.key] || {} : {};
   const saveTrackedRun = (r) => {
     update(r.dayKey, {
       done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs,
@@ -450,11 +486,15 @@ export default function App() {
             </button>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} delay={0} />
-              <Stat label="BEST STREAK" value={stats.best} sub="days in a row" delay={0.05} />
+              <Stat label="STREAK" value={stats.curStreak} sub={`best ${stats.best} day${stats.best === 1 ? "" : "s"}`} delay={0.05} />
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <Stat label="RUNS DONE" value={stats.runsLogged} delay={0.1} />
+              <Stat label="TIME ON FEET" value={stats.minTotal ? fmtMin(stats.minTotal) : "—"} delay={0.15} />
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <Stat label="RUNS DONE" value={stats.runsLogged} delay={0.1} />
-              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} delay={0.15} />
+              <Stat label="AVG PACE" value={fmtPace(stats.avgPaceSec) || "—"} sub={stats.avgPaceSec ? "min / km" : ""} delay={0.2} />
+              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} delay={0.25} />
             </div>
 
             {/* Personal bests */}
@@ -501,6 +541,10 @@ export default function App() {
               <WeeklyBars data={weekly} />
             </Card>
             <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>PACE TREND · UP MEANS FASTER</div>
+              <PaceTrend points={paceTrend} />
+            </Card>
+            <Card style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>CUMULATIVE DISTANCE</div>
               <CumulativeArea points={cumulative} />
             </Card>
@@ -523,6 +567,24 @@ export default function App() {
                   );
                 })}
               </div>
+            </Card>
+
+            {/* Appearance */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>APPEARANCE</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {ACCENTS.map((a) => {
+                  const active = accent === a.id;
+                  return (
+                    <button key={a.id} onClick={() => setAccentTheme(a.id)} className="tap"
+                      style={{ flex: 1, cursor: "pointer", borderRadius: 12, padding: "10px 4px", background: C.surface2, border: `1px solid ${active ? a.accent : C.line}` }}>
+                      <span style={{ display: "block", width: 18, height: 18, borderRadius: "50%", background: a.accent, margin: "0 auto 6px" }} />
+                      <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.text : C.dim }}>{a.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Pick the accent colour used across the whole app.</div>
             </Card>
 
             {/* Reminders */}
@@ -584,16 +646,38 @@ export default function App() {
           </div>
         )}
 
-        {tab === "history" && (
+        {tab === "history" && (() => {
+          const shown = history.filter((h) =>
+            histFilter === "gps" ? h.e.tracked : histFilter === "run" ? parseFloat(h.e.km) > 0 : true);
+          const shownKm = shown.reduce((s, h) => s + (parseFloat(h.e.km) || 0), 0);
+          const shownMin = shown.reduce((s, h) => s + (parseFloat(h.e.min) || 0), 0);
+          return (
           <div className="rise">
+            {history.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                {[["all", "All"], ["run", "Runs"], ["gps", "GPS"]].map(([id, lbl]) => (
+                  <button key={id} onClick={() => { setHistFilter(id); haptic(5); }} className="chip"
+                    style={histFilter === id ? { background: C.accent, color: C.bg, border: "none" } : {}}>
+                    {lbl}
+                  </button>
+                ))}
+                <span className="num" style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
+                  {shown.length} · {shownKm.toFixed(1)} km{shownMin ? ` · ${fmtMin(shownMin)}` : ""}
+                </span>
+              </div>
+            )}
             {history.length === 0 ? (
               <Card style={{ textAlign: "center" }}>
                 <div className="disp" style={{ fontSize: 18, fontWeight: 700 }}>No runs logged yet</div>
                 <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>Tick off a day on the Plan tab and it'll show up here.</div>
               </Card>
+            ) : shown.length === 0 ? (
+              <Card style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 13, color: C.dim }}>Nothing matches this filter yet.</div>
+              </Card>
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
-                {history.map((h, idx) => {
+                {shown.map((h, idx) => {
                   const p = fmtPace(paceSec(h.e.min, h.e.km));
                   const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
                   const extras = [];
@@ -607,7 +691,7 @@ export default function App() {
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <div style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: typeColor(h.type) }} />
                         <div style={{ flex: 1 }}>
-                          <div className="disp" style={{ fontSize: 15, fontWeight: 700 }}>{h.title}</div>
+                          <div className="disp" style={{ fontSize: 15, fontWeight: 700 }}>{h.title}{h.e.feel ? ` ${FEELS[h.e.feel - 1]}` : ""}</div>
                           <div style={{ fontSize: 11, color: C.dim }}>Week {h.week} · {h.d} · {date}</div>
                           {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>“{h.e.note}”</div>}
                         </div>
@@ -645,31 +729,58 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {tab === "plan" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 700, marginBottom: 14, cursor: "pointer" }}>
-              <Icon name="play" size={17} /> Track a run with GPS
-            </button>
             {!startDate && (
               <button onClick={() => { setTab("stats"); haptic(8); }} className="chip"
                 style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.surface, color: C.text, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 <Icon name="calendar" size={14} /> Add your start date to highlight today's run
               </button>
             )}
-            {/* Next up */}
-            {nextUp ? (
-              <div className="card" style={{ borderRadius: 16, padding: "16px 18px", marginBottom: 18, borderLeft: `3px solid ${C.accent}` }}>
-                <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>NEXT UP · WEEK {nextUp.week}</div>
-                <div className="disp" style={{ fontSize: 24, fontWeight: 700, margin: "5px 0 3px" }}>{nextUp.d} · {nextUp.title}</div>
-                <div style={{ fontSize: 13, color: C.dim }}>{nextUp.detail}</div>
+            {/* Today / next-up hero with inline actions */}
+            {hero ? (
+              <div className="card" style={{ borderRadius: 18, padding: "16px 18px", marginBottom: 18, borderLeft: `3px solid ${typeColor(hero.type)}` }}>
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, letterSpacing: 2, color: typeColor(hero.type), fontWeight: 800 }}>
+                    {heroIdx >= 0 ? "TODAY" : "NEXT UP"} · WEEK {hero.week} · {hero.d}
+                  </span>
+                  {heroIdx >= 0 && (
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
+                      {dateForDay(startDate, heroIdx).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </span>
+                  )}
+                </div>
+                <div className="disp" style={{ fontSize: 27, fontWeight: 700, margin: "6px 0 2px", textDecoration: heroEntry.done ? "line-through" : "none", color: heroEntry.done ? C.dim : C.text }}>
+                  {hero.title}
+                </div>
+                <div style={{ fontSize: 13, color: C.dim }}>{hero.detail}</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                  <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                    style={{ flex: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 12, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                    <Icon name="play" size={15} /> Start GPS run
+                  </button>
+                  <button onClick={() => update(hero.key, { done: !heroEntry.done })} className="chip tap"
+                    style={{ flex: 1, padding: "12px 0", fontSize: 13, background: heroEntry.done ? C.surface2 : C.bg, color: heroEntry.done ? C.text : C.dim }}>
+                    {heroEntry.done ? "Done ✓" : "Mark done"}
+                  </button>
+                </div>
+                {heroEntry.done && nextUp && nextUp.key !== hero.key && (
+                  <div style={{ fontSize: 11, color: C.dim, marginTop: 10 }}>
+                    Next up: Week {nextUp.week} · {nextUp.d} · {nextUp.title}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="card glow" style={{ borderRadius: 16, padding: 18, marginBottom: 18, textAlign: "center" }}>
                 <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>🎖️ Mission complete</div>
                 <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>You built up to 5 km. Go crush that army run.</div>
+                <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 12, padding: "12px 22px", fontSize: 14, fontWeight: 700, marginTop: 12, cursor: "pointer" }}>
+                  <Icon name="play" size={15} /> Track a victory run
+                </button>
               </div>
             )}
 
@@ -688,14 +799,23 @@ export default function App() {
 
             {WEEKS.map((w) => {
               const wDone = w.days.filter((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done).length;
+              const weekDone = wDone === w.days.length;
+              const collapsed = weekDone && !openWeeks[w.n];
               return (
                 <div key={w.n} className="stagger" style={{ marginBottom: 22, animationDelay: `${(w.n - 1) * 0.06}s` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+                  <div className={weekDone ? "tap" : ""}
+                    onClick={() => { if (weekDone) { setOpenWeeks((o) => ({ ...o, [w.n]: !o[w.n] })); haptic(5); } }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
                     <span className="disp" style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>{wDone}/{w.days.length}</span>
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: weekDone ? C.accent : C.dim, fontWeight: 700 }}>
+                      {weekDone ? `✓ done ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
+                    </span>
                   </div>
-                  <div style={{ display: "grid", gap: 7 }}>
+                  <div style={{ height: 3, borderRadius: 3, background: C.surface2, marginBottom: 9, overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: 3, background: C.accent, width: `${(wDone / w.days.length) * 100}%`, transition: "width .3s ease" }} />
+                  </div>
+                  {!collapsed && <div style={{ display: "grid", gap: 7 }}>
                     {w.days.map((day, di) => {
                       const key = `w${w.n}d${di}`;
                       const e = log[key] || {};
@@ -742,13 +862,27 @@ export default function App() {
                                   {e.stitch ? "Yes" : "No"}
                                 </button>
                               </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                                <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Effort felt</span>
+                                <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                                  {FEELS.map((f, i) => {
+                                    const sel = e.feel === i + 1;
+                                    return (
+                                      <button key={i} onClick={() => update(key, { feel: sel ? null : i + 1 })}
+                                        style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${sel ? C.accent : C.line}`, background: sel ? C.surface : "transparent", fontSize: 16, cursor: "pointer", opacity: !e.feel || sel ? 1 : 0.45, padding: 0 }}>
+                                        {f}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                               <input className="inp" placeholder="How did it feel? (note)" value={e.note ?? ""} onChange={(ev) => update(key, { note: ev.target.value })} />
                             </div>
                           )}
                         </div>
                       );
                     })}
-                  </div>
+                  </div>}
                 </div>
               );
             })}
