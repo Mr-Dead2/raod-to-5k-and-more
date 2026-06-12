@@ -7,6 +7,7 @@ import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
+import { shareRunCard } from "../share.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
 const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
@@ -424,6 +425,13 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <button onClick={() => { haptic(8); t.reset(); }} className="chip" style={{ padding: "15px 18px", fontSize: 15 }}>Discard</button>
             <button onClick={save} className="chip cta" style={{ flex: 1, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Save run</button>
           </div>
+          <button onClick={async () => {
+            haptic(8);
+            await shareRunCard({ km: Number(km.toFixed(2)), min: Number((t.elapsedMs / 60000).toFixed(1)), durMs: t.elapsedMs, route: downsample(t.points), elev: Math.round(t.elevGainM), kcal: Math.round(kcal), ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}), date: new Date().toISOString() });
+          }} className="chip" style={{ width: "100%", marginTop: 10, padding: "13px 0", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3" /><circle cx="18" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4" /></svg>
+            Share run card
+          </button>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { shareRunCard } from "./share.js";
 import { WEEKS, FLAT, TOTAL, C, typeColor, ACCENTS, applyAccent } from "./data.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
 import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
@@ -227,6 +228,7 @@ export default function App() {
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
     let timeSum = 0, paceKmSum = 0, minTotal = 0, earlyRuns = 0, lateRuns = 0;
+    let bestSplitSec = 0, bestElevM = 0, totalKcal = 0;
     FLAT.forEach((f) => {
       const e = log[f.key];
       if (!e) return;
@@ -243,6 +245,13 @@ export default function App() {
         const h = new Date(e.date).getHours();
         if (h < 8) earlyRuns++; else if (h >= 21) lateRuns++;
       }
+      // per-run PRs from GPS-tracked runs
+      if (e.splits && e.splits.length > 0) {
+        const fastest = Math.min(...e.splits);
+        if (bestSplitSec === 0 || fastest < bestSplitSec) bestSplitSec = fastest;
+      }
+      if (e.elev > 0) bestElevM = Math.max(bestElevM, e.elev);
+      if (e.kcal > 0) totalKcal += e.kcal;
     });
     let best = 0, cur = 0;
     FLAT.forEach((f) => { if (log[f.key] && log[f.key].done) { cur++; best = Math.max(best, cur); } else cur = 0; });
@@ -253,7 +262,7 @@ export default function App() {
     for (let i = lastDone; i >= 0 && log[FLAT[i].key] && log[FLAT[i].key].done; i--) curStreak++;
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
     const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
-    return { kmLogged, done, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5 };
+    return { kmLogged, done, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5, bestSplitSec, bestElevM, totalKcal };
   }, [log]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
@@ -499,11 +508,16 @@ export default function App() {
 
             {/* Personal bests */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>PERSONAL BESTS</div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>PERSONAL RECORDS</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <PB label="BEST PACE" value={fmtPace(stats.bestPaceSec) || "—"} unit="/km" color={C.accent} />
+                <PB label="LONGEST RUN" value={stats.maxKm ? stats.maxKm + " km" : "—"} />
+                <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1) + " km"} />
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <PB label="FASTEST" value={fmtPace(stats.bestPaceSec) || "—"} unit="/km" />
-                <PB label="LONGEST" value={stats.maxKm ? stats.maxKm : "—"} unit={stats.maxKm ? "km" : ""} />
-                <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1)} unit="km" />
+                <PB label="FASTEST KM" value={fmtPace(stats.bestSplitSec) || "—"} unit={stats.bestSplitSec ? "/km" : ""} color={C.accent} />
+                <PB label="BEST CLIMB" value={stats.bestElevM ? `+${stats.bestElevM} m` : "—"} />
+                <PB label="TOTAL KCAL" value={stats.totalKcal ? Math.round(stats.totalKcal).toLocaleString() : "—"} />
               </div>
             </Card>
 
@@ -693,13 +707,19 @@ export default function App() {
                         <div style={{ flex: 1 }}>
                           <div className="disp" style={{ fontSize: 15, fontWeight: 700 }}>{h.title}{h.e.feel ? ` ${FEELS[h.e.feel - 1]}` : ""}</div>
                           <div style={{ fontSize: 11, color: C.dim }}>Week {h.week} · {h.d} · {date}</div>
-                          {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>“{h.e.note}”</div>}
+                          {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>"{h.e.note}"</div>}
                         </div>
                         <div style={{ textAlign: "right" }}>
                           {parseFloat(h.e.km) > 0 && <div className="num" style={{ fontSize: 18, fontWeight: 700, color: C.accent }}>{parseFloat(h.e.km)} km</div>}
                           <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH</div>}
                           {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
+                          {parseFloat(h.e.km) > 0 && (
+                            <button onClick={() => { haptic(8); shareRunCard({ km: h.e.km, min: h.e.min, durMs: h.e.durMs, route: h.e.route, elev: h.e.elev, kcal: h.e.kcal, runKm: h.e.runKm, walkKm: h.e.walkKm, date: h.e.date }); }}
+                              className="chip" style={{ padding: "4px 10px", fontSize: 10, marginTop: 5 }}>
+                              <Icon name="share" size={11} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />share
+                            </button>
+                          )}
                         </div>
                       </div>
                       {(extras.length > 0 || (h.e.route && h.e.route.length > 1)) && (
@@ -911,10 +931,10 @@ export default function App() {
   );
 }
 
-function PB({ label, value, unit }) {
+function PB({ label, value, unit, color }) {
   return (
-    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 12, padding: "10px 6px" }}>
-      <div className="num" style={{ fontSize: 19, fontWeight: 700, color: C.text }}>{value}<span style={{ fontSize: 11, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
+    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 12, padding: "10px 6px", borderTop: color ? `2px solid ${color}` : "none" }}>
+      <div className="num" style={{ fontSize: 16, fontWeight: 700, color: color || C.text }}>{value}<span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
       <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 4, fontWeight: 700 }}>{label}</div>
     </div>
   );
