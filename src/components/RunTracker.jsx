@@ -29,7 +29,11 @@ function recentPaceSec(points, windowM = 200) {
 }
 
 function downsample(points, max = 250) {
-  const compact = (p) => [Number(p.lat.toFixed(5)), Number(p.lng.toFixed(5))];
+  const compact = (p) => {
+    const arr = [Number(p.lat.toFixed(5)), Number(p.lng.toFixed(5))];
+    if (p.phase) arr.push(p.phase[0]); // 'r' or 'w' — phase char for map coloring
+    return arr;
+  };
   if (points.length <= max) return points.map(compact);
   const step = points.length / max;
   const out = [];
@@ -98,9 +102,26 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const [runMin, setRunMin] = useState(parsed?.run || 6);
   const [walkMin, setWalkMin] = useState(parsed?.walk || 1);
 
+  // Stable ref so callbacks from the GPS fix path don't close over stale state
+  const audioOnRef = useRef(audioOn);
+  useEffect(() => { audioOnRef.current = audioOn; }, [audioOn]);
+
+  // Deduplication ref — prevents double-firing when both GPS-fix path and
+  // ticker-based React effect detect the same phase transition.
+  const lastCuedPhaseRef = useRef(null);
+  const announcePhaseCue = useCallback((ph) => {
+    if (ph === lastCuedPhaseRef.current) return;
+    lastCuedPhaseRef.current = ph;
+    if (ph === "walk") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOnRef.current) speak("Walk now"); }
+    else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOnRef.current) speak("Run now"); }
+  }, []);
+
   const t = useRunTracker({
     autoPause: autoPauseOn,
     interval: intervalOn && runMin > 0 && walkMin > 0 ? { runSec: runMin * 60, walkSec: walkMin * 60 } : null,
+    // Called directly from the GPS fix callback — more reliable for background/
+    // screen-off cues on native Android than the React effect path below.
+    onPhaseChange: announcePhaseCue,
   });
 
   // body weight for the calorie estimate, remembered between runs
@@ -165,13 +186,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   }
   const prevPhase = useRef(null);
   useEffect(() => {
-    if (!phase) { prevPhase.current = null; return; }
-    if (prevPhase.current && prevPhase.current !== phase) {
-      if (phase === "WALK") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOn) speak("Walk now"); }
-      else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOn) speak("Run now"); }
-    }
+    if (!phase) { prevPhase.current = null; lastCuedPhaseRef.current = null; return; }
+    // Ticker-based fallback for web or when GPS fixes are infrequent.
+    // announcePhaseCue deduplicates against the GPS-fix path above.
+    if (prevPhase.current && prevPhase.current !== phase) announcePhaseCue(phase.toLowerCase());
     prevPhase.current = phase;
-  }, [phase, audioOn]);
+  }, [phase, announcePhaseCue]);
 
   const countIv = useRef(null);
   useEffect(() => () => clearInterval(countIv.current), []);

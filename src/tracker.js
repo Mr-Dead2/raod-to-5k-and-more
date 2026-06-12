@@ -57,6 +57,7 @@ export function useRunTracker(opts = {}) {
   const elevRef = useRef(0);
   const maxSpeedRef = useRef(0);
   const phaseDistRef = useRef({ run: 0, walk: 0 });
+  const lastPhaseRef = useRef(null); // tracks last phase for onPhaseChange callback
   const wakeLock = useRef(null);
 
   // elapsed time, frozen while auto-paused
@@ -101,7 +102,15 @@ export function useRunTracker(opts = {}) {
     if (f.accuracy != null && f.accuracy > MAX_ACCURACY_M) return; // wait for a usable fix
 
     const p = smooth(f);
-    if (!last.current) { last.current = p; lastMoveAt.current = p.t; setPoints((pts) => [...pts, p]); return; }
+    if (!last.current) {
+      const iv0 = optsRef.current.interval;
+      const ph0 = iv0 && iv0.runSec > 0 && iv0.walkSec > 0
+        ? ((liveElapsed() / 1000) % (iv0.runSec + iv0.walkSec) < iv0.runSec ? "run" : "walk")
+        : null;
+      last.current = p; lastMoveAt.current = p.t;
+      setPoints((pts) => [...pts, ph0 ? { ...p, phase: ph0 } : p]);
+      return;
+    }
 
     const d = haversine(last.current, p);
     const dt = Math.max((p.t - last.current.t) / 1000, 0.001);
@@ -113,8 +122,6 @@ export function useRunTracker(opts = {}) {
 
     distRef.current += d;
     setDistanceM(distRef.current);
-    last.current = p;
-    setPoints((pts) => [...pts, p]);
 
     const segSpeed = d / dt;
     if (segSpeed > maxSpeedRef.current) { maxSpeedRef.current = segSpeed; setMaxSpeedMs(segSpeed); }
@@ -130,14 +137,24 @@ export function useRunTracker(opts = {}) {
       }
     }
 
-    // bucket distance into the current run/walk interval phase, if any
+    // bucket distance into the current run/walk interval phase (if any) and tag the point
     const iv = optsRef.current.interval;
+    let pointPhase = null;
     if (iv && iv.runSec > 0 && iv.walkSec > 0) {
       const pos = (liveElapsed() / 1000) % (iv.runSec + iv.walkSec);
-      const key = pos < iv.runSec ? "run" : "walk";
-      phaseDistRef.current = { ...phaseDistRef.current, [key]: phaseDistRef.current[key] + d };
+      pointPhase = pos < iv.runSec ? "run" : "walk";
+      phaseDistRef.current = { ...phaseDistRef.current, [pointPhase]: phaseDistRef.current[pointPhase] + d };
       setPhaseDist(phaseDistRef.current);
+      // Fire the phase-change callback directly from the GPS fix path — this works
+      // even when the screen is off on native Android (the background geolocation
+      // foreground service keeps delivering fixes and the JS engine stays responsive).
+      if (lastPhaseRef.current !== null && pointPhase !== lastPhaseRef.current) {
+        optsRef.current.onPhaseChange?.(pointPhase);
+      }
+      lastPhaseRef.current = pointPhase;
     }
+    last.current = p;
+    setPoints((pts) => [...pts, pointPhase ? { ...p, phase: pointPhase } : p]);
 
     while (distRef.current / 1000 >= nextKm.current) {
       const sec = liveElapsed() / 1000;
@@ -175,7 +192,7 @@ export function useRunTracker(opts = {}) {
     if (!startWatch()) return;
     distRef.current = 0; nextKm.current = 1; splitBase.current = 0; last.current = null; baseMs.current = 0;
     kalman.current = null; alt.current = null;
-    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 };
+    elevRef.current = 0; maxSpeedRef.current = 0; phaseDistRef.current = { run: 0, walk: 0 }; lastPhaseRef.current = null;
     lastMoveAt.current = Date.now(); setAuto(false);
     setDistanceM(0); setSplits([]); setPoints([]); setElapsedMs(0);
     setElevGainM(0); setMaxSpeedMs(0); setPhaseDist({ run: 0, walk: 0 });
