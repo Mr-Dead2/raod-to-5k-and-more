@@ -7,6 +7,7 @@ import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
+import { shareRunCard } from "../share.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
 const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
@@ -29,7 +30,11 @@ function recentPaceSec(points, windowM = 200) {
 }
 
 function downsample(points, max = 250) {
-  const compact = (p) => [Number(p.lat.toFixed(5)), Number(p.lng.toFixed(5))];
+  const compact = (p) => {
+    const arr = [Number(p.lat.toFixed(5)), Number(p.lng.toFixed(5))];
+    if (p.phase) arr.push(p.phase[0]); // 'r' or 'w' — phase char for map coloring
+    return arr;
+  };
   if (points.length <= max) return points.map(compact);
   const step = points.length / max;
   const out = [];
@@ -98,9 +103,26 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const [runMin, setRunMin] = useState(parsed?.run || 6);
   const [walkMin, setWalkMin] = useState(parsed?.walk || 1);
 
+  // Stable ref so callbacks from the GPS fix path don't close over stale state
+  const audioOnRef = useRef(audioOn);
+  useEffect(() => { audioOnRef.current = audioOn; }, [audioOn]);
+
+  // Deduplication ref — prevents double-firing when both GPS-fix path and
+  // ticker-based React effect detect the same phase transition.
+  const lastCuedPhaseRef = useRef(null);
+  const announcePhaseCue = useCallback((ph) => {
+    if (ph === lastCuedPhaseRef.current) return;
+    lastCuedPhaseRef.current = ph;
+    if (ph === "walk") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOnRef.current) speak("Walk now"); }
+    else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOnRef.current) speak("Run now"); }
+  }, []);
+
   const t = useRunTracker({
     autoPause: autoPauseOn,
     interval: intervalOn && runMin > 0 && walkMin > 0 ? { runSec: runMin * 60, walkSec: walkMin * 60 } : null,
+    // Called directly from the GPS fix callback — more reliable for background/
+    // screen-off cues on native Android than the React effect path below.
+    onPhaseChange: announcePhaseCue,
   });
 
   // body weight for the calorie estimate, remembered between runs
@@ -165,13 +187,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   }
   const prevPhase = useRef(null);
   useEffect(() => {
-    if (!phase) { prevPhase.current = null; return; }
-    if (prevPhase.current && prevPhase.current !== phase) {
-      if (phase === "WALK") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOn) speak("Walk now"); }
-      else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOn) speak("Run now"); }
-    }
+    if (!phase) { prevPhase.current = null; lastCuedPhaseRef.current = null; return; }
+    // Ticker-based fallback for web or when GPS fixes are infrequent.
+    // announcePhaseCue deduplicates against the GPS-fix path above.
+    if (prevPhase.current && prevPhase.current !== phase) announcePhaseCue(phase.toLowerCase());
     prevPhase.current = phase;
-  }, [phase, audioOn]);
+  }, [phase, announcePhaseCue]);
 
   const countIv = useRef(null);
   useEffect(() => () => clearInterval(countIv.current), []);
@@ -404,6 +425,13 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <button onClick={() => { haptic(8); t.reset(); }} className="chip" style={{ padding: "15px 18px", fontSize: 15 }}>Discard</button>
             <button onClick={save} className="chip cta" style={{ flex: 1, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Save run</button>
           </div>
+          <button onClick={async () => {
+            haptic(8);
+            await shareRunCard({ km: Number(km.toFixed(2)), min: Number((t.elapsedMs / 60000).toFixed(1)), durMs: t.elapsedMs, route: downsample(t.points), elev: Math.round(t.elevGainM), kcal: Math.round(kcal), ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}), date: new Date().toISOString() });
+          }} className="chip" style={{ width: "100%", marginTop: 10, padding: "13px 0", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3" /><circle cx="18" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4" /></svg>
+            Share run card
+          </button>
         </div>
       )}
     </div>
