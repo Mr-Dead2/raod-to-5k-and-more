@@ -126,3 +126,69 @@ export async function askCoach({ apiKey, model, summary, messages, signal }) {
   if (!text) throw new Error("The coach sent back an empty reply — try again.");
   return text;
 }
+
+const PLAN_SYSTEM = [
+  "You are an expert running coach generating the runner's NEXT training block as",
+  "strict JSON. Use their data and goal to progress them beyond what they've",
+  "already achieved — build distance/endurance and speed sensibly, never a big jump.",
+  "",
+  "Return ONLY a JSON object of this exact shape (no prose, no markdown):",
+  '{ "weeks": [ { "label": "short theme", "days": [',
+  '  { "d": "MON", "type": "run|easy|rest", "title": "e.g. 6 km tempo", "detail": "how to run it", "km": 6 }',
+  "] } ] }",
+  "",
+  "Rules: 3 or 4 weeks; EXACTLY 7 days per week in MON..SUN order; each day type is",
+  "'run' (key/quality sessions), 'easy' (recovery) or 'rest'; km is a number (0 for",
+  "rest). Include a weekly long run that grows, 1-2 quality sessions (tempo or",
+  "intervals), easy days and 2 rest days per week. Progressive overload week to week",
+  "with a lighter final week. Keep titles/detail short and concrete.",
+].join("\n");
+
+// Ask Groq (JSON mode) for a new training block. Returns the parsed object
+// (validate/normalize it with src/plan.js before applying). Throws on failure.
+export async function generatePlanBlock({ apiKey, model, summary, signal }) {
+  const user = [
+    "Generate my next training block as JSON, progressing beyond my current results.",
+    "My data:",
+    JSON.stringify(summary),
+  ].join("\n");
+
+  let res;
+  try {
+    res = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: model || DEFAULT_MODEL,
+        temperature: 0.5,
+        max_tokens: 1800,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: PLAN_SYSTEM },
+          { role: "user", content: user },
+        ],
+      }),
+      signal,
+    });
+  } catch {
+    throw new Error("Couldn't reach Groq — check your connection and try again.");
+  }
+
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch { /* non-JSON error body */ }
+    if (res.status === 401) throw new Error("That API key was rejected — double-check it.");
+    if (res.status === 404) throw new Error(`Model "${model}" not found — try another Groq model.`);
+    if (res.status === 429) throw new Error("Groq rate limit hit — wait a moment, then retry.");
+    throw new Error(detail || `Plan request failed (${res.status}).`);
+  }
+
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("The coach sent back an empty plan — try again.");
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("Couldn't read the generated plan — try again.");
+  }
+}

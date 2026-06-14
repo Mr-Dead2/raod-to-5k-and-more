@@ -77,12 +77,20 @@ front — the other headline reason to go native.
 
 ## Architecture
 
-- **`src/data.js` — the plan + theme, single source of truth.** `WEEKS` (4 weeks
-  × 7 days) defines the whole training plan; edit a day here and the rows, "next
-  up", stats, charts, and history all follow. `FLAT` flattens days and assigns
-  each a stable `key` of the form `` `w${week}d${index}` `` — this key joins the
-  static plan to user progress, so any progress read/write must use that exact
-  format. `C` is the entire color palette; use its tokens (`C.accent`, `C.run`,
+- **`src/data.js` — the plan + theme, single source of truth.** `DEFAULT_WEEKS`
+  (4 weeks × 7 days) is the built-in training plan. The *active* plan is exposed as
+  the live bindings `WEEKS`/`FLAT`/`TOTAL` (note: `let`, not `const`), and
+  `applyPlan(weeks)` swaps it in place (falsy → back to default), re-deriving
+  `FLAT`/`TOTAL`. Everything imports those live bindings, so swapping the plan plus
+  a re-render (App bumps a `planVersion` state that's in the plan-derived `useMemo`
+  deps) updates rows, "next up", stats, charts and history. The AI coach uses this
+  to **append** a generated "beyond 5K" block (see `src/plan.js`/`coach.js`);
+  appending continues the week numbering so new days get fresh `key`s and existing
+  progress/history is untouched. `FLAT` assigns each day a stable `key` of the form
+  `` `w${week}d${index}` `` — this key joins the plan to user progress, so any
+  progress read/write must use that exact format, and `StreakGrid`/the "complete"
+  achievement derive their size from the active plan (no hardcoded 4/28). `C` is
+  the entire color palette; use its tokens (`C.accent`, `C.run`,
   `C.easy`, `C.rest`, …) and `typeColor(type)` instead of hardcoding hex.
   `ACCENTS`/`applyAccent(id)` swap the accent (and `run`) colour by mutating `C`
   in place — everything reads `C` at render time, so a re-render is enough.
@@ -127,9 +135,15 @@ front — the other headline reason to go native.
   target, defaults to going beyond 5K), `coachModel` (defaults to `DEFAULT_MODEL`),
   and `coachChat` (the message thread, capped to the last 20, cached so it survives
   reloads; the older single-reply `coachLast` is migrated in). The `groqKey` is
-  deliberately stripped from JSON backups so it never leaks via export/share. No
-  live alarm — best-effort, and the user can edit the model string when Groq's free
-  model line-up changes.
+  deliberately stripped from JSON backups so it never leaks via export/share. The
+  coach can also **generate a new training block**: `generatePlanBlock()` asks Groq
+  in JSON mode for the next 3-4 weeks, `src/plan.js` (`normalizeWeeks`/`extendPlan`)
+  strictly validates/coerces the reply (7 days/week, valid type/day/km, capped
+  length) and appends it to the active plan with continued week numbering. App
+  previews the proposed weeks, then `setActivePlan()` applies + persists it
+  (settings key `customPlan`, restored on load in `main.jsx` and on backup import).
+  No live alarm — best-effort, and the user can edit the model string when Groq's
+  free model line-up changes.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
   distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and

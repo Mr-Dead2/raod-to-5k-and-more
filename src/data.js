@@ -8,7 +8,12 @@
 // past 5 km in week 3 so race day feels comfortable. "run N min / walk N min"
 // strings are parsed by the interval cues (RunTracker.parseInterval), so keep
 // that exact wording on run/walk days.
-export const WEEKS = [
+//
+// `DEFAULT_WEEKS` is the built-in plan. The *active* plan (`WEEKS`) can be
+// replaced/extended at runtime by `applyPlan()` — e.g. the AI coach appending a
+// "beyond 5K" block. Everything imports the live `WEEKS`/`FLAT`/`TOTAL` bindings,
+// so swapping the plan + a re-render updates rows, stats, charts and history.
+export const DEFAULT_WEEKS = [
   { n: 1, label: "Build the base", days: [
     { d: "MON", type: "run", title: "3 km intervals", detail: "Run 5 min / walk 1 min × 4 — ease in", km: 3 },
     { d: "TUE", type: "easy", title: "Easy 2.5 km", detail: "Conversational jog or brisk walk", km: 2.5 },
@@ -47,9 +52,23 @@ export const WEEKS = [
   ]},
 ];
 
-// Flattened day list. `key` (w{week}d{index}) joins the static plan to user progress.
-export const FLAT = WEEKS.flatMap((w) => w.days.map((day, di) => ({ ...day, key: `w${w.n}d${di}`, week: w.n })));
-export const TOTAL = FLAT.length;
+// Flatten a weeks array into a day list. `key` (w{week}d{index}) joins the plan
+// to user progress, so any progress read/write must use that exact format.
+const flatten = (weeks) => weeks.flatMap((w) => w.days.map((day, di) => ({ ...day, key: `w${w.n}d${di}`, week: w.n })));
+
+// The active plan. `let` so applyPlan() can swap it; importers see live bindings.
+export let WEEKS = DEFAULT_WEEKS;
+export let FLAT = flatten(WEEKS);
+export let TOTAL = FLAT.length;
+
+// Swap the active plan (e.g. an AI-extended one). Pass a falsy/empty value to
+// fall back to the built-in plan. Re-derives FLAT/TOTAL in place.
+export function applyPlan(weeks) {
+  WEEKS = Array.isArray(weeks) && weeks.length ? weeks : DEFAULT_WEEKS;
+  FLAT = flatten(WEEKS);
+  TOTAL = FLAT.length;
+  return WEEKS;
+}
 
 // Color palette — use these tokens instead of hardcoding hex values.
 export const C = {
