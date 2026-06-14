@@ -7,6 +7,7 @@ import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/
 import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, getCoaching, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
@@ -1017,12 +1018,32 @@ export default function App() {
       <BottomNav tab={tab} onChange={(t) => { setTab(t); setOpen(null); haptic(6); }} />
 
       {trackerOpen && (
-        <RunTracker
-          days={FLAT}
-          defaultKey={trackDefaultKey}
-          onSave={saveTrackedRun}
-          onClose={() => setTrackerOpen(false)}
-        />
+        <ErrorBoundary fallback={(err) => (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 9999, background: C.bg, color: C.text,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            gap: 14, padding: 24, textAlign: "center",
+            paddingTop: "max(24px, env(safe-area-inset-top))",
+          }}>
+            <div style={{ fontSize: 38 }}>🛰️</div>
+            <div className="disp" style={{ fontSize: 20, fontWeight: 700 }}>Run tracker hit a snag</div>
+            <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320 }}>
+              Couldn't start the GPS tracker. Nothing was lost — head back and try again.
+            </div>
+            <pre style={{ maxWidth: 340, width: "100%", overflow: "auto", textAlign: "left", fontSize: 11, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, color: C.warn, whiteSpace: "pre-wrap", margin: 0 }}>{err?.message || String(err)}</pre>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setTrackerOpen(false)} className="chip" style={{ padding: "13px 24px", fontSize: 15 }}>Back</button>
+              <button onClick={() => window.location.reload()} className="chip cta" style={{ padding: "13px 24px", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Reload</button>
+            </div>
+          </div>
+        )}>
+          <RunTracker
+            days={FLAT}
+            defaultKey={trackDefaultKey}
+            onSave={saveTrackedRun}
+            onClose={() => setTrackerOpen(false)}
+          />
+        </ErrorBoundary>
       )}
 
       {replayRun && (

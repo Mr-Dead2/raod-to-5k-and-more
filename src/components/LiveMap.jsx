@@ -2,7 +2,7 @@
 // attribution, no API key). Used live in the tracker (follow mode keeps the
 // runner centred) and as static thumbnails in History. Tiles need internet;
 // offline the route still draws on the dark background, like the old SVG map.
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
@@ -45,30 +45,41 @@ export function LiveMap({ points, height = 200, follow = false, interactive = tr
   const segLinesRef = useRef([]);
   const startRef = useRef(null);
   const endRef = useRef(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const map = L.map(elRef.current, {
-      zoomControl: false,
-      attributionControl: true,
-      dragging: interactive,
-      touchZoom: interactive,
-      doubleClickZoom: interactive,
-      scrollWheelZoom: false,
-      boxZoom: false,
-      keyboard: false,
-    });
-    L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
-    map.setView([0, 0], 2);
-    mapRef.current = map;
+    let map;
+    try {
+      map = L.map(elRef.current, {
+        zoomControl: false,
+        attributionControl: true,
+        dragging: interactive,
+        touchZoom: interactive,
+        doubleClickZoom: interactive,
+        scrollWheelZoom: false,
+        boxZoom: false,
+        keyboard: false,
+      });
+      L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
+      map.setView([0, 0], 2);
+      mapRef.current = map;
+    } catch (e) {
+      // Leaflet can fail on some WebViews/contexts — never let it take down the
+      // tracker; the run still records, the map just shows an unavailable note.
+      console.warn("LiveMap init failed:", e);
+      setFailed(true);
+      return;
+    }
     // container is sized by the parent after mount — recalc once laid out
     const t = setTimeout(() => map.invalidateSize(), 0);
-    return () => { clearTimeout(t); map.remove(); mapRef.current = null; };
+    return () => { clearTimeout(t); try { map.remove(); } catch { /* already gone */ } mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    try {
     const pts = (points || []).map(norm);
     if (!pts.length) return;
 
@@ -105,6 +116,9 @@ export function LiveMap({ points, height = 200, follow = false, interactive = tr
       if (follow) map.panTo(ll_all[ll_all.length - 1]);
       else map.fitBounds(L.latLngBounds(ll_all), { padding: [26, 26], maxZoom: 17 });
     }
+    } catch (e) {
+      console.warn("LiveMap draw failed:", e);
+    }
   }, [points, follow]);
 
   // Show legend only when there are phase-tagged points (interval mode was on)
@@ -113,7 +127,12 @@ export function LiveMap({ points, height = 200, follow = false, interactive = tr
   return (
     <div style={{ position: "relative", height, borderRadius: 12, overflow: "hidden", border: `1px solid ${C.line}`, background: C.bg }}>
       <div ref={elRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} aria-label="Run route map" />
-      {(!points || points.length === 0) && (
+      {failed && (
+        <div style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
+          Map unavailable — your run is still being recorded.
+        </div>
+      )}
+      {!failed && (!points || points.length === 0) && (
         <div style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
           Waiting for GPS — your route will draw here.
         </div>
