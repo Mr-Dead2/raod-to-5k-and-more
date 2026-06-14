@@ -104,6 +104,17 @@ front — the other headline reason to go native.
   `message` (today's session text) in IndexedDB so the SW doesn't need to know
   the plan. Be honest in any UX: the web cannot guarantee an exact alarm when
   fully closed.
+- **AI coach (`src/coach.js`).** An optional Groq-powered coach in the Stats tab.
+  No backend: the user pastes their own free Groq API key (settings key `groqKey`,
+  on-device only) and the request goes straight from the browser to
+  `api.groq.com` (OpenAI-compatible chat endpoint). `buildSummary()` turns the
+  `stats`/`weekly`/`history` snapshot into a compact JSON the model can read;
+  `getCoaching()` calls Groq and returns plain-text advice with friendly error
+  messages. Settings: `goal` (free-text target, defaults to going beyond 5K),
+  `coachModel` (defaults to `DEFAULT_MODEL`), and `coachLast` (the last reply,
+  cached so it survives reloads). The `groqKey` is deliberately stripped from JSON
+  backups so it never leaks via export/share. No live alarm — best-effort, and the
+  user can edit the model string when Groq's free model line-up changes.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
   distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and
