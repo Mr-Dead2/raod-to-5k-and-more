@@ -8,6 +8,7 @@ import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
+import { buildSummary, getCoaching, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
@@ -94,6 +95,15 @@ export default function App() {
   const [remTime, setRemTime] = useState("18:00");
   const [perm, setPerm] = useState("default");
 
+  // AI coach (Groq)
+  const [coachKey, setCoachKey] = useState("");
+  const [coachGoal, setCoachGoal] = useState(DEFAULT_GOAL);
+  const [coachModel, setCoachModel] = useState(DEFAULT_MODEL);
+  const [coachOut, setCoachOut] = useState(null); // { text, at }
+  const [coachBusy, setCoachBusy] = useState(false);
+  const [coachErr, setCoachErr] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
   // install prompt
   const [installEvt, setInstallEvt] = useState(null);
 
@@ -107,6 +117,10 @@ export default function App() {
     const s = loadSettings();
     setStartDate(s.startDate || "");
     setAccent(applyAccent(s.accent));
+    setCoachKey(s.groqKey || "");
+    setCoachGoal(s.goal || DEFAULT_GOAL);
+    setCoachModel(s.coachModel || DEFAULT_MODEL);
+    if (s.coachLast) setCoachOut(s.coachLast);
     setLoaded(true);
     (async () => {
       const r = await loadReminder();
@@ -167,10 +181,36 @@ export default function App() {
     haptic(8);
   };
 
+  // AI coach settings persist to the same on-device settings store
+  const saveCoachKey = (v) => { setCoachKey(v); saveSettings({ ...loadSettings(), groqKey: v }); };
+  const saveCoachGoal = (v) => { setCoachGoal(v); saveSettings({ ...loadSettings(), goal: v }); };
+  const saveCoachModel = (v) => { setCoachModel(v); saveSettings({ ...loadSettings(), coachModel: v }); };
+
+  const runCoach = async () => {
+    if (!coachKey.trim()) { setCoachErr("Add your free Groq API key below first."); setShowKey(true); return; }
+    haptic(8);
+    setCoachBusy(true); setCoachErr("");
+    try {
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const text = await getCoaching({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary });
+      const out = { text, at: new Date().toISOString() };
+      setCoachOut(out);
+      saveSettings({ ...loadSettings(), coachLast: out });
+      haptic([10, 20, 10]);
+    } catch (e) {
+      setCoachErr(e.message || "Couldn't reach the coach.");
+      haptic(8);
+    } finally {
+      setCoachBusy(false);
+    }
+  };
+
   const importRef = useRef(null);
   const exportData = async () => {
     haptic(8);
-    const payload = { app: "road-to-5k", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...loadSettings(), startDate } };
+    // keep the secret Groq key out of backup files (export can open a share sheet)
+    const { groqKey, ...safeSettings } = loadSettings();
+    const payload = { app: "road-to-5k", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } };
     const json = JSON.stringify(payload, null, 2);
     const filename = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
     // native: Blob downloads don't work in the WebView — share the file instead
@@ -563,6 +603,55 @@ export default function App() {
             <Card style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>CUMULATIVE DISTANCE</div>
               <CumulativeArea points={cumulative} />
+            </Card>
+
+            {/* AI coach */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>AI COACH</span>
+                <span style={{ marginLeft: "auto", fontSize: 10, color: C.dim, fontWeight: 600 }}>powered by Groq</span>
+              </div>
+
+              <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>MY GOAL</label>
+              <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
+                placeholder={DEFAULT_GOAL} style={{ marginTop: 6, marginBottom: 12 }} />
+
+              {coachOut && (
+                <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 12, padding: 13, marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: C.text, whiteSpace: "pre-wrap" }}>{coachOut.text}</div>
+                  <div style={{ fontSize: 10, color: C.dim, marginTop: 10 }}>
+                    Updated {new Date(coachOut.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+              )}
+
+              {coachErr && <div style={{ fontSize: 12, color: C.warn, marginBottom: 10, lineHeight: 1.5 }}>{coachErr}</div>}
+
+              <button onClick={runCoach} disabled={coachBusy} className="tap cta disp"
+                style={{ width: "100%", borderRadius: 12, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: coachBusy ? "default" : "pointer", opacity: coachBusy ? 0.7 : 1 }}>
+                {coachBusy ? "Analysing your runs…" : coachOut ? "Refresh coaching" : "Analyse my training"}
+              </button>
+
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 600 }}>
+                  {coachKey ? "Groq key saved · edit setup" : "Set up your free Groq key"}
+                </summary>
+                <div style={{ marginTop: 12 }}>
+                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
+                  <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
+                    onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
+                    autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
+                  </label>
+                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1, display: "block", marginTop: 12 }}>MODEL</label>
+                  <input className="inp" value={coachModel} onChange={(e) => saveCoachModel(e.target.value)}
+                    placeholder={DEFAULT_MODEL} autoComplete="off" spellCheck={false} style={{ marginTop: 6 }} />
+                  <div style={{ fontSize: 11, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
+                    Get a free key at <span style={{ color: C.text, fontWeight: 600 }}>console.groq.com/keys</span>. It's stored only on this device and sent straight to Groq — no server in between.
+                  </div>
+                </div>
+              </details>
             </Card>
 
             {/* Achievements */}
