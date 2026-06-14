@@ -34,6 +34,7 @@ export function buildSummary({ stats, weekly, history, goal }) {
         stitch: !!h.e.stitch,
         gps: !!h.e.tracked,
         elevGainM: h.e.elev || null,
+        cadenceSpm: h.e.cadence || null,
       };
     });
   return {

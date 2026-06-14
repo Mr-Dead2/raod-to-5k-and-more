@@ -312,6 +312,7 @@ export default function App() {
         splits: e.splits ? e.splits.map((s) => fmtPace(s)) : null,
         feel: e.feel || null, stitch: !!e.stitch, gps: !!e.tracked,
         elevGainM: e.elev || null, runKm: e.runKm ?? null, walkKm: e.walkKm ?? null,
+        cadenceSpm: e.cadence || null,
         date: e.date ? e.date.slice(0, 10) : null,
       };
       const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
@@ -499,6 +500,7 @@ export default function App() {
     update(r.dayKey, {
       done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs,
       elev: r.elev, kcal: r.kcal, runKm: r.runKm, walkKm: r.walkKm, hrAvg: r.hrAvg, hrMax: r.hrMax,
+      cadence: r.cadence, steps: r.steps,
     });
     setTrackerOpen(false);
     setTab("history");
@@ -995,6 +997,7 @@ export default function App() {
                   if (h.e.runKm > 0) extras.push(`Run ${h.e.runKm} km`);
                   if (h.e.walkKm > 0) extras.push(`Walk ${h.e.walkKm} km`);
                   if (h.e.hrAvg > 0) extras.push(`♥ ${h.e.hrAvg} avg · ${h.e.hrMax} max`);
+                  if (h.e.cadence > 0) extras.push(`${h.e.cadence} spm`);
                   return (
                     <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

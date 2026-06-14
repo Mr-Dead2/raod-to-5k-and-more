@@ -203,7 +203,15 @@ front — the other headline reason to go native.
   Speech + Web Audio beeps), and **run/walk interval cues**: it parses the
   session's `run X / walk Y` pattern, derives the current phase from elapsed time,
   and buzzes + beeps + announces "Run now" / "Walk now" at each switch (RUN/WALK
-  banner with countdown; run/walk minutes adjustable on the idle screen).
+  banner with countdown; run/walk minutes adjustable on the idle screen). Two more
+  trackables: **cadence** (`src/cadence.js`'s `useStepCounter` — a dependency-free
+  accelerometer peak detector over `devicemotion`, gated to non-paused tracking;
+  shows live/avg steps-per-minute and is saved as `cadence`/`steps`) and a
+  **run goal** (distance or time, set on the idle screen, persisted as
+  `runGoal*` settings) that drives a live progress bar with "to go"/ETA and a
+  one-time buzz + voice cue when reached. Both are best-effort and degrade to
+  hidden when unsupported; cadence + a `spm` chip also appear in History and feed
+  the AI coach summary.
 - **Haptics.** `haptic()` in `src/celebrate.js` uses `navigator.vibrate` on the
   web and **`@capacitor/haptics`** in the native app (impact taps for short
   buzzes, timed vibration for longer, raw vibrator for array patterns).
