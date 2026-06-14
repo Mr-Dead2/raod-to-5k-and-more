@@ -54,3 +54,24 @@ export function extendPlan(currentWeeks, rawBlock) {
   if (!block.length) return null;
   return [...base, ...block];
 }
+
+// Split the plan into weeks already started (any done day → locked) and the
+// trailing weeks not begun yet (safe to re-tune; no progress lives there).
+export function planSplit(weeks, log) {
+  const touched = (w) => w.days.some((_, di) => log[`w${w.n}d${di}`]?.done);
+  let lastTouched = -1;
+  weeks.forEach((w, i) => { if (touched(w)) lastTouched = i; });
+  return { locked: weeks.slice(0, lastTouched + 1), future: weeks.slice(lastTouched + 1) };
+}
+
+// Replace the not-yet-started weeks with an AI-adjusted block, keeping started
+// weeks intact. Returns { weeks, fromIdx } for preview/apply, or null if there's
+// nothing to adapt or the reply was unusable.
+export function adaptedPlan(currentWeeks, log, rawBlock) {
+  const base = Array.isArray(currentWeeks) && currentWeeks.length ? currentWeeks : DEFAULT_WEEKS;
+  const { locked, future } = planSplit(base, log);
+  if (!future.length) return null;
+  const adjusted = normalizeWeeks(weeksFromModelJson(rawBlock), (locked.length ? maxWeekN(locked) : 0) + 1);
+  if (!adjusted.length) return null;
+  return { weeks: [...locked, ...adjusted], fromIdx: locked.length };
+}

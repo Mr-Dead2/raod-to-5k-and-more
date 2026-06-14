@@ -142,8 +142,14 @@ front — the other headline reason to go native.
   length) and appends it to the active plan with continued week numbering. App
   previews the proposed weeks, then `setActivePlan()` applies + persists it
   (settings key `customPlan`, restored on load in `main.jsx` and on backup import).
-  No live alarm — best-effort, and the user can edit the model string when Groq's
-  free model line-up changes.
+  **Adaptive loop:** each session row has a "too easy / just right / too hard"
+  control stored as `cal` on the log entry (surfaced to the model via
+  `buildSummary`'s `sessionFeedback`); "Adjust upcoming" calls `adaptPlanBlock()`
+  + `plan.js`'s `planSplit`/`adaptedPlan` to re-tune only the not-yet-started weeks
+  (started weeks stay locked); History has a per-run "Coach this run" button
+  (`coachRun()`, transient `runFeedback` state); and finishing the plan surfaces a
+  "Build my next block" CTA on the Plan tab. No live alarm — best-effort, and the
+  user can edit the model string when Groq's free model line-up changes.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
   distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and
