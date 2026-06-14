@@ -59,29 +59,42 @@ export function buildSummary({ stats, weekly, history, goal }) {
   };
 }
 
-const SYSTEM_PROMPT = [
-  "You are an upbeat, expert running coach reviewing a runner's training log",
-  "from their phone app. Be specific and practical, never generic — base every",
-  "point on the data you are given. If the data is thin, say what to log next.",
+// Coaching persona + ground rules. The runner's data snapshot is appended so the
+// coach always answers from real numbers, across the whole conversation.
+const PERSONA = [
+  "You are an upbeat, expert running coach inside a '5K and beyond' phone app.",
+  "Be specific and practical, grounded in the runner's data below — never generic.",
+  "If the data is thin, say what to log next. Always steer toward the runner's goal.",
   "",
-  "Write in plain text only: no markdown headers, no ** bold **, no tables.",
-  "Structure the reply as:",
-  "1) one warm sentence on how they're doing,",
-  "2) 2-4 short lines each starting with '- ' on what to improve or watch",
-  "   (pacing, consistency, weekly distance progression, recovery, stitches),",
-  "3) a final line starting with 'Next: ' naming one concrete session or focus",
-  "   for the coming days that moves them toward their stated goal.",
-  "Keep the whole reply under 180 words. Encouraging, concrete, and honest.",
+  "Plain text only: no markdown headers, no ** bold **, no tables. Short paragraphs",
+  "and '- ' bullet lines are fine. Keep normal replies under 160 words; only go",
+  "longer when explicitly asked for a full plan (then use day-by-day '- ' bullets).",
 ].join("\n");
 
-// Call Groq and return the coaching text. Throws a user-friendly Error on failure.
-export async function getCoaching({ apiKey, model, summary, signal }) {
-  const user = [
-    "Here is my running data as JSON. Coach me toward my goal:",
-    "",
-    JSON.stringify(summary, null, 2),
-  ].join("\n");
+const systemFor = (summary) =>
+  `${PERSONA}\n\nThe runner's current training data (JSON):\n${JSON.stringify(summary)}`;
 
+// First-touch analysis prompt (used by the "Analyse my training" button).
+export const ANALYSE_PROMPT =
+  "Give me a short coaching read on how I'm doing: one warm opening sentence, " +
+  "then 2-4 lines starting with '- ' on what to improve or watch (pacing, " +
+  "consistency, weekly distance, recovery, stitches), then a final line starting " +
+  "with 'Next: ' naming one concrete session for the coming days toward my goal.";
+
+// One-tap follow-up questions shown as chips under the conversation.
+export const QUICK_ASKS = [
+  { label: "How's my pacing?", text: "How is my pacing across recent runs? Am I going out too fast or too slow?" },
+  { label: "Ready for 5K?", text: "Based on my data, am I ready to run a continuous 5K? What's the gap?" },
+  { label: "Run longer", text: "How do I build up to running longer distances without walking breaks?" },
+  { label: "Stop stitches", text: "Why might I be getting side stitches, and how do I prevent them?" },
+  { label: "Pre-run fuel", text: "What should I eat and drink before and after a run at my level?" },
+  { label: "Plan beyond 5K", text: "Build me a simple week-by-week plan to progress beyond 5K toward running as far as I can." },
+];
+
+// Send a message thread to Groq and return the assistant's reply text.
+// `messages` is an array of { role: "user" | "assistant", content }.
+// Throws a user-friendly Error on failure.
+export async function askCoach({ apiKey, model, summary, messages, signal }) {
   let res;
   try {
     res = await fetch(GROQ_ENDPOINT, {
@@ -90,11 +103,8 @@ export async function getCoaching({ apiKey, model, summary, signal }) {
       body: JSON.stringify({
         model: model || DEFAULT_MODEL,
         temperature: 0.6,
-        max_tokens: 500,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: user },
-        ],
+        max_tokens: 700,
+        messages: [{ role: "system", content: systemFor(summary) }, ...messages],
       }),
       signal,
     });

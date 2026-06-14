@@ -7,8 +7,9 @@ import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/
 import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
-import { buildSummary, getCoaching, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
+import { buildSummary, askCoach, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
@@ -99,7 +100,8 @@ export default function App() {
   const [coachKey, setCoachKey] = useState("");
   const [coachGoal, setCoachGoal] = useState(DEFAULT_GOAL);
   const [coachModel, setCoachModel] = useState(DEFAULT_MODEL);
-  const [coachOut, setCoachOut] = useState(null); // { text, at }
+  const [coachChat, setCoachChat] = useState([]); // [{ role: "user"|"assistant", content }]
+  const [coachInput, setCoachInput] = useState("");
   const [coachBusy, setCoachBusy] = useState(false);
   const [coachErr, setCoachErr] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -120,7 +122,8 @@ export default function App() {
     setCoachKey(s.groqKey || "");
     setCoachGoal(s.goal || DEFAULT_GOAL);
     setCoachModel(s.coachModel || DEFAULT_MODEL);
-    if (s.coachLast) setCoachOut(s.coachLast);
+    if (Array.isArray(s.coachChat)) setCoachChat(s.coachChat);
+    else if (s.coachLast?.text) setCoachChat([{ role: "assistant", content: s.coachLast.text }]); // migrate old single reply
     setLoaded(true);
     (async () => {
       const r = await loadReminder();
@@ -186,24 +189,39 @@ export default function App() {
   const saveCoachGoal = (v) => { setCoachGoal(v); saveSettings({ ...loadSettings(), goal: v }); };
   const saveCoachModel = (v) => { setCoachModel(v); saveSettings({ ...loadSettings(), coachModel: v }); };
 
-  const runCoach = async () => {
+  const persistChat = (chat) => {
+    const trimmed = chat.slice(-20); // cap stored history
+    setCoachChat(trimmed);
+    saveSettings({ ...loadSettings(), coachChat: trimmed });
+  };
+
+  // Send a message through the coach. `content` is what the model receives;
+  // `display` (optional) is the friendlier text shown in the user bubble.
+  const sendToCoach = async (content, display) => {
+    if (coachBusy) return;
     if (!coachKey.trim()) { setCoachErr("Add your free Groq API key below first."); setShowKey(true); return; }
     haptic(8);
-    setCoachBusy(true); setCoachErr("");
+    setCoachErr("");
+    const base = [...coachChat, { role: "user", content, display: display || content }];
+    setCoachChat(base);
+    setCoachBusy(true);
     try {
       const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
-      const text = await getCoaching({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary });
-      const out = { text, at: new Date().toISOString() };
-      setCoachOut(out);
-      saveSettings({ ...loadSettings(), coachLast: out });
+      const messages = base.map((m) => ({ role: m.role, content: m.content })); // strip display before sending
+      const text = await askCoach({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, messages });
+      persistChat([...base, { role: "assistant", content: text }]);
       haptic([10, 20, 10]);
     } catch (e) {
       setCoachErr(e.message || "Couldn't reach the coach.");
+      setCoachChat(coachChat); // roll the optimistic user bubble back on failure
       haptic(8);
     } finally {
       setCoachBusy(false);
     }
   };
+  const analyseCoach = () => sendToCoach(ANALYSE_PROMPT, "Analyse my training");
+  const askCoachInput = () => { const q = coachInput.trim(); if (!q) return; setCoachInput(""); sendToCoach(q); };
+  const clearCoachChat = () => { persistChat([]); setCoachErr(""); haptic(6); };
 
   const importRef = useRef(null);
   const exportData = async () => {
@@ -616,21 +634,53 @@ export default function App() {
               <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
                 placeholder={DEFAULT_GOAL} style={{ marginTop: 6, marginBottom: 12 }} />
 
-              {coachOut && (
-                <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 12, padding: 13, marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, lineHeight: 1.6, color: C.text, whiteSpace: "pre-wrap" }}>{coachOut.text}</div>
-                  <div style={{ fontSize: 10, color: C.dim, marginTop: 10 }}>
-                    Updated {new Date(coachOut.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </div>
+              {/* Conversation thread */}
+              {coachChat.length > 0 && (
+                <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {coachChat.map((m, i) => (
+                    <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
+                      <div style={{
+                        background: m.role === "user" ? C.accent : C.surface2,
+                        color: m.role === "user" ? C.bg : C.text,
+                        border: m.role === "user" ? "none" : `1px solid ${C.line}`,
+                        borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.55,
+                        whiteSpace: "pre-wrap", fontWeight: m.role === "user" ? 600 : 400,
+                      }}>{m.display || m.content}</div>
+                    </div>
+                  ))}
+                  {coachBusy && (
+                    <div style={{ alignSelf: "flex-start", fontSize: 12, color: C.dim, padding: "2px 4px" }}>Coach is thinking…</div>
+                  )}
                 </div>
               )}
 
               {coachErr && <div style={{ fontSize: 12, color: C.warn, marginBottom: 10, lineHeight: 1.5 }}>{coachErr}</div>}
 
-              <button onClick={runCoach} disabled={coachBusy} className="tap cta disp"
-                style={{ width: "100%", borderRadius: 12, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: coachBusy ? "default" : "pointer", opacity: coachBusy ? 0.7 : 1 }}>
-                {coachBusy ? "Analysing your runs…" : coachOut ? "Refresh coaching" : "Analyse my training"}
-              </button>
+              {/* Quick-ask chips */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                {QUICK_ASKS.map((q) => (
+                  <button key={q.label} onClick={() => sendToCoach(q.text, q.label)} disabled={coachBusy} className="chip tap"
+                    style={{ background: C.surface2, color: C.text, opacity: coachBusy ? 0.5 : 1 }}>{q.label}</button>
+                ))}
+              </div>
+
+              {/* Ask-anything input */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input className="inp" value={coachInput} onChange={(e) => setCoachInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") askCoachInput(); }}
+                  placeholder="Ask your coach anything…" disabled={coachBusy} />
+                <button onClick={askCoachInput} disabled={coachBusy || !coachInput.trim()} className="tap cta"
+                  style={{ borderRadius: 10, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0, opacity: coachBusy || !coachInput.trim() ? 0.5 : 1 }}>Send</button>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={analyseCoach} disabled={coachBusy} className="chip tap" style={{ flex: 1, opacity: coachBusy ? 0.5 : 1 }}>
+                  {coachChat.length ? "Re-analyse my training" : "Analyse my training"}
+                </button>
+                {coachChat.length > 0 && (
+                  <button onClick={clearCoachChat} disabled={coachBusy} className="chip tap" style={{ opacity: coachBusy ? 0.5 : 1 }}>Clear</button>
+                )}
+              </div>
 
               <details style={{ marginTop: 12 }}>
                 <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 600 }}>
@@ -1017,12 +1067,32 @@ export default function App() {
       <BottomNav tab={tab} onChange={(t) => { setTab(t); setOpen(null); haptic(6); }} />
 
       {trackerOpen && (
-        <RunTracker
-          days={FLAT}
-          defaultKey={trackDefaultKey}
-          onSave={saveTrackedRun}
-          onClose={() => setTrackerOpen(false)}
-        />
+        <ErrorBoundary fallback={(err) => (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 9999, background: C.bg, color: C.text,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            gap: 14, padding: 24, textAlign: "center",
+            paddingTop: "max(24px, env(safe-area-inset-top))",
+          }}>
+            <div style={{ fontSize: 38 }}>🛰️</div>
+            <div className="disp" style={{ fontSize: 20, fontWeight: 700 }}>Run tracker hit a snag</div>
+            <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320 }}>
+              Couldn't start the GPS tracker. Nothing was lost — head back and try again.
+            </div>
+            <pre style={{ maxWidth: 340, width: "100%", overflow: "auto", textAlign: "left", fontSize: 11, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, color: C.warn, whiteSpace: "pre-wrap", margin: 0 }}>{err?.message || String(err)}</pre>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setTrackerOpen(false)} className="chip" style={{ padding: "13px 24px", fontSize: 15 }}>Back</button>
+              <button onClick={() => window.location.reload()} className="chip cta" style={{ padding: "13px 24px", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Reload</button>
+            </div>
+          </div>
+        )}>
+          <RunTracker
+            days={FLAT}
+            defaultKey={trackDefaultKey}
+            onSave={saveTrackedRun}
+            onClose={() => setTrackerOpen(false)}
+          />
+        </ErrorBoundary>
       )}
 
       {replayRun && (

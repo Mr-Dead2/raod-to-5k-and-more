@@ -16,7 +16,7 @@ export const WEEKS = [
     { d: "THU", type: "run", title: "3.5 km steady", detail: "Run 6 min / walk 1 min — smooth rhythm", km: 3.5 },
     { d: "FRI", type: "easy", title: "Easy 2.5 km", detail: "Loose legs, nothing hard", km: 2.5 },
     { d: "SAT", type: "run", title: "4 km long run", detail: "Run 6 min / walk 1 min — longest this week", km: 4 },
-    { d: "SUN", type: "rest", title: "Rest", detail: "Let the work sink in", km: 0 },
+    { d: "SUN", type: "run", title: "4 km easy", detail: "Easy continuous jog — relaxed pace", km: 4 },
   ]},
   { n: 2, label: "Stretch the run", days: [
     { d: "MON", type: "run", title: "4 km intervals", detail: "Run 8 min / walk 1 min — longer run blocks", km: 4 },
