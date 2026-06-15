@@ -3,11 +3,14 @@ import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
-import { applyAccent } from "./data.js";
+import { applyAccent, applyPlan } from "./data.js";
 import { loadSettings } from "./storage.js";
 
-// Apply the saved accent theme before the first render so there's no color flash.
-applyAccent(loadSettings().accent);
+// Apply the saved accent theme + any custom (AI-extended) plan before the first
+// render so there's no color flash and the plan is correct from the start.
+const _s = loadSettings();
+applyAccent(_s.accent);
+applyPlan(_s.customPlan);
 
 // Keep the installed app up to date without prompting.
 registerSW({ immediate: true });

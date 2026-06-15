@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { shareRunCard } from "./share.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
-import { WEEKS, FLAT, TOTAL, C, typeColor, ACCENTS, applyAccent } from "./data.js";
+import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan } from "./data.js";
+import { extendPlan, planSplit, adaptedPlan } from "./plan.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
 import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
 import { LiveMap } from "./components/LiveMap.jsx";
@@ -9,7 +10,7 @@ import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
-import { buildSummary, askCoach, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
+import { buildSummary, askCoach, generatePlanBlock, adaptPlanBlock, coachRun, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
@@ -105,6 +106,15 @@ export default function App() {
   const [coachBusy, setCoachBusy] = useState(false);
   const [coachErr, setCoachErr] = useState("");
   const [showKey, setShowKey] = useState(false);
+  // AI-generated plan: a version counter to re-derive plan memos, plus a pending
+  // proposal the user previews before applying.
+  const [planVersion, setPlanVersion] = useState(0);
+  const [proposedPlan, setProposedPlan] = useState(null); // { weeks, fromIdx, mode }
+  const [planBusy, setPlanBusy] = useState(false);
+  const isCustomPlan = WEEKS !== DEFAULT_WEEKS;
+  // per-run "coach this run" feedback (transient, keyed by session key)
+  const [runFeedback, setRunFeedback] = useState({}); // { [key]: text }
+  const [runFeedbackBusy, setRunFeedbackBusy] = useState(null); // key currently loading
 
   // install prompt
   const [installEvt, setInstallEvt] = useState(null);
@@ -223,6 +233,100 @@ export default function App() {
   const askCoachInput = () => { const q = coachInput.trim(); if (!q) return; setCoachInput(""); sendToCoach(q); };
   const clearCoachChat = () => { persistChat([]); setCoachErr(""); haptic(6); };
 
+  // Swap the active training plan, persist it, and re-derive plan-based memos.
+  const setActivePlan = (weeks) => {
+    applyPlan(weeks);
+    saveSettings({ ...loadSettings(), customPlan: weeks && weeks !== DEFAULT_WEEKS ? weeks : null });
+    setPlanVersion((v) => v + 1);
+  };
+
+  // Ask the AI for a new block (appended to the current plan) and preview it.
+  const generatePlan = async () => {
+    if (planBusy) return;
+    if (!coachKey.trim()) { setCoachErr("Add your free Groq API key below first."); setShowKey(true); return; }
+    haptic(8);
+    setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
+    try {
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const raw = await generatePlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary });
+      const extended = extendPlan(WEEKS, raw);
+      if (!extended) throw new Error("The plan came back empty — try again.");
+      setProposedPlan({ weeks: extended, fromIdx: WEEKS.length, mode: "append" });
+      haptic([10, 20, 10]);
+    } catch (e) {
+      setCoachErr(e.message || "Couldn't build a plan.");
+      haptic(8);
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
+  // Re-tune the not-yet-started weeks from results + too easy/hard feedback.
+  const adaptPlan = async () => {
+    if (planBusy) return;
+    if (!coachKey.trim()) { setCoachErr("Add your free Groq API key below first."); setShowKey(true); return; }
+    const { future } = planSplit(WEEKS, log);
+    if (!future.length) { setCoachErr("No upcoming sessions to adjust — finish or build a new block."); return; }
+    haptic(8);
+    setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
+    try {
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const raw = await adaptPlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, weeks: future });
+      const res = adaptedPlan(WEEKS, log, raw);
+      if (!res) throw new Error("Couldn't adjust the plan — try again.");
+      setProposedPlan({ ...res, mode: "adapt" });
+      haptic([10, 20, 10]);
+    } catch (e) {
+      setCoachErr(e.message || "Couldn't adjust the plan.");
+      haptic(8);
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
+  const applyProposedPlan = () => {
+    if (!proposedPlan) return;
+    setActivePlan(proposedPlan.weeks);
+    const adapt = proposedPlan.mode === "adapt";
+    setProposedPlan(null);
+    haptic([12, 30, 12]); confetti({ count: 90 });
+    setToast(adapt
+      ? { icon: "🎯", title: "Upcoming sessions re-tuned", label: "PLAN UPDATED" }
+      : { icon: "🚀", title: "New training block added", label: "PLAN UPDATED" });
+    setTab("plan");
+  };
+  const resetPlan = () => { setActivePlan(null); setProposedPlan(null); haptic(8); setToast({ icon: "↩️", title: "Back to the default plan", label: "PLAN RESET" }); };
+
+  // On-demand AI feedback for a single logged run.
+  const coachThisRun = async (item) => {
+    if (runFeedbackBusy) return;
+    if (!coachKey.trim()) { setTab("stats"); setCoachErr("Add your free Groq API key in the AI coach card first."); setShowKey(true); return; }
+    haptic(8); setRunFeedbackBusy(item.key);
+    try {
+      const e = item.e || {};
+      const km = parseFloat(e.km) || 0, min = parseFloat(e.min) || 0;
+      const run = {
+        session: `${item.title} — ${item.detail}`,
+        km: Number(km.toFixed(2)), min: min ? Number(min.toFixed(1)) : null,
+        pace: min && km ? fmtPace((min * 60) / km) : null,
+        splits: e.splits ? e.splits.map((s) => fmtPace(s)) : null,
+        feel: e.feel || null, stitch: !!e.stitch, gps: !!e.tracked,
+        elevGainM: e.elev || null, runKm: e.runKm ?? null, walkKm: e.walkKm ?? null,
+        cadenceSpm: e.cadence || null,
+        date: e.date ? e.date.slice(0, 10) : null,
+      };
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const text = await coachRun({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, run });
+      setRunFeedback((m) => ({ ...m, [item.key]: text }));
+      haptic([10, 20, 10]);
+    } catch (e) {
+      setRunFeedback((m) => ({ ...m, [item.key]: `⚠️ ${e.message || "Couldn't reach the coach."}` }));
+      haptic(8);
+    } finally {
+      setRunFeedbackBusy(null);
+    }
+  };
+
   const importRef = useRef(null);
   const exportData = async () => {
     haptic(8);
@@ -271,6 +375,7 @@ export default function App() {
         persist(merged);
         if (backup.settings.startDate) saveStart(backup.settings.startDate);
         if (backup.settings.accent) setAccentTheme(backup.settings.accent);
+        if (backup.settings.customPlan) setActivePlan(backup.settings.customPlan);
         haptic([10, 30, 10]);
         setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}`, label: "BACKUP" });
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
@@ -322,8 +427,8 @@ export default function App() {
     for (let i = lastDone; i >= 0 && log[FLAT[i].key] && log[FLAT[i].key].done; i--) curStreak++;
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
     const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
-    return { kmLogged, done, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5, bestSplitSec, bestElevM, totalKcal };
-  }, [log]);
+    return { kmLogged, done, total: TOTAL, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5, bestSplitSec, bestElevM, totalKcal };
+  }, [log, planVersion]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
     let value = 0, target = 0;
@@ -334,7 +439,7 @@ export default function App() {
       if (k && !isNaN(k)) value += k;
     });
     return { label: w.n, value, target };
-  }), [log]);
+  }), [log, planVersion]);
 
   const todayIdx = todayIndexOf(startDate);
 
@@ -344,14 +449,14 @@ export default function App() {
     isToday: i === todayIdx,
     isPast: startDate && i < todayIdx,
     label: startDate ? dateForDay(startDate, i).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : f.d,
-  })), [log, startDate, todayIdx]);
+  })), [log, startDate, todayIdx, planVersion]);
 
   const history = useMemo(() => {
     const items = FLAT.map((f) => ({ ...f, e: log[f.key] || {} }))
       .filter((f) => f.e.done || parseFloat(f.e.km) > 0);
     items.sort((a, b) => (b.e.date || "").localeCompare(a.e.date || ""));
     return items;
-  }, [log]);
+  }, [log, planVersion]);
 
   const paceTrend = useMemo(() => history
     .filter((h) => paceSec(h.e.min, h.e.km) > 0)
@@ -395,6 +500,7 @@ export default function App() {
     update(r.dayKey, {
       done: true, km: r.km, min: r.min, tracked: true, route: r.route, splits: r.splits, durMs: r.durMs,
       elev: r.elev, kcal: r.kcal, runKm: r.runKm, walkKm: r.walkKm, hrAvg: r.hrAvg, hrMax: r.hrMax,
+      cadence: r.cadence, steps: r.steps,
     });
     setTrackerOpen(false);
     setTab("history");
@@ -440,7 +546,7 @@ export default function App() {
   const R = 46, CIRC = 2 * Math.PI * R;
 
   // header schedule eyebrow / countdown
-  let eyebrow = "4-WEEK MISSION", countdown = null;
+  let eyebrow = `${WEEKS.length}-WEEK MISSION`, countdown = null;
   if (startDate) {
     if (todayIdx < 0) eyebrow = `STARTS IN ${-todayIdx} DAY${-todayIdx === 1 ? "" : "S"}`;
     else if (todayIdx >= TOTAL) eyebrow = "PLAN COMPLETE 🎖️";
@@ -682,6 +788,56 @@ export default function App() {
                 )}
               </div>
 
+              {/* Build a new training block from results */}
+              <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 14, paddingTop: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginBottom: 4 }}>NEXT TRAINING BLOCK</div>
+                <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
+                  Smashed your goal? Let the coach read your results and add a fresh block that pushes you further. It's appended to your plan — nothing logged is lost.
+                </div>
+
+                {proposedPlan && (() => {
+                  const newWeeks = proposedPlan.weeks.slice(proposedPlan.fromIdx);
+                  const verb = proposedPlan.mode === "adapt" ? "adjusted" : "new";
+                  return (
+                    <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 8 }}>Proposed — {newWeeks.length} {verb} week{newWeeks.length === 1 ? "" : "s"}</div>
+                      {newWeeks.map((w) => {
+                        const km = w.days.reduce((s, d) => s + (d.km || 0), 0);
+                        return (
+                          <div key={w.n} style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Week {w.n} · {w.label} <span style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span></div>
+                            <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+                              {w.days.map((d) => `${d.d} ${d.km ? d.title : "rest"}`).join(" · ")}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                        <button onClick={applyProposedPlan} className="tap cta" style={{ flex: 1, borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700 }}>
+                          {proposedPlan.mode === "adapt" ? "Update my plan" : "Add to my plan"}
+                        </button>
+                        <button onClick={() => setProposedPlan(null)} className="chip tap">Discard</button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <button onClick={generatePlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
+                    {planBusy ? "Working…" : proposedPlan && proposedPlan.mode !== "adapt" ? "Regenerate block" : "Build my next block"}
+                  </button>
+                  <button onClick={adaptPlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
+                    Adjust upcoming
+                  </button>
+                  {isCustomPlan && (
+                    <button onClick={resetPlan} disabled={planBusy} className="chip tap" style={{ opacity: planBusy ? 0.5 : 1 }}>Reset plan</button>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
+                  "Adjust upcoming" re-tunes your not-yet-started sessions from your results and the too easy / too hard feedback you leave on completed days.
+                </div>
+              </div>
+
               <details style={{ marginTop: 12 }}>
                 <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 600 }}>
                   {coachKey ? "Groq key saved · edit setup" : "Set up your free Groq key"}
@@ -841,6 +997,7 @@ export default function App() {
                   if (h.e.runKm > 0) extras.push(`Run ${h.e.runKm} km`);
                   if (h.e.walkKm > 0) extras.push(`Walk ${h.e.walkKm} km`);
                   if (h.e.hrAvg > 0) extras.push(`♥ ${h.e.hrAvg} avg · ${h.e.hrMax} max`);
+                  if (h.e.cadence > 0) extras.push(`${h.e.cadence} spm`);
                   return (
                     <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -887,6 +1044,23 @@ export default function App() {
                                 <span key={i} className="chip" style={{ background: C.surface2, color: C.text, fontSize: 11 }}>{i + 1}k · {fmtPace(s)}</span>
                               ))}
                             </div>
+                          )}
+                        </div>
+                      )}
+                      {parseFloat(h.e.km) > 0 && (
+                        <div style={{ marginTop: 10 }}>
+                          {runFeedback[h.key] ? (
+                            <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontSize: 12.5, lineHeight: 1.55, color: C.text, whiteSpace: "pre-wrap" }}>
+                              {runFeedback[h.key]}
+                              <button onClick={() => coachThisRun(h)} disabled={runFeedbackBusy === h.key} className="chip tap" style={{ marginTop: 8, fontSize: 11 }}>
+                                {runFeedbackBusy === h.key ? "…" : "Ask again"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={() => coachThisRun(h)} disabled={runFeedbackBusy === h.key} className="chip tap"
+                              style={{ fontSize: 11, opacity: runFeedbackBusy === h.key ? 0.6 : 1 }}>
+                              {runFeedbackBusy === h.key ? "Coach is reading…" : "🧠 Coach this run"}
+                            </button>
                           )}
                         </div>
                       )}
@@ -943,11 +1117,17 @@ export default function App() {
             ) : (
               <div className="card glow" style={{ borderRadius: 16, padding: 18, marginBottom: 18, textAlign: "center" }}>
                 <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>🎖️ Mission complete</div>
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>You built up to 5 km. Go crush that army run.</div>
-                <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 12, padding: "12px 22px", fontSize: 14, fontWeight: 700, marginTop: 12, cursor: "pointer" }}>
-                  <Icon name="play" size={15} /> Track a victory run
-                </button>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>You finished every session. Keep the momentum — let your coach build what's next.</div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
+                  <button onClick={() => { haptic(12); setTab("stats"); generatePlan(); }} disabled={planBusy} className="tap cta disp"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 12, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: planBusy ? 0.6 : 1 }}>
+                    🚀 {planBusy ? "Building…" : "Build my next block"}
+                  </button>
+                  <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="chip tap disp"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "12px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                    <Icon name="play" size={15} /> Victory run
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1043,7 +1223,23 @@ export default function App() {
                                   })}
                                 </div>
                               </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                                <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Session was</span>
+                                <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+                                  {[["easy", "Too easy"], ["ok", "Just right"], ["hard", "Too hard"]].map(([v, lbl]) => {
+                                    const sel = e.cal === v;
+                                    const col = v === "hard" ? C.warn : v === "easy" ? C.easy : C.accent;
+                                    return (
+                                      <button key={v} onClick={() => update(key, { cal: sel ? null : v })} className="chip"
+                                        style={{ background: sel ? col : C.bg, color: sel ? C.bg : C.dim, border: sel ? "none" : `1px solid ${C.line}`, fontSize: 11 }}>
+                                        {lbl}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                               <input className="inp" placeholder="How did it feel? (note)" value={e.note ?? ""} onChange={(ev) => update(key, { note: ev.target.value })} />
+                              {e.cal && <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>The coach uses this — tap “Adjust upcoming” in the AI coach card to re-tune your next sessions.</div>}
                             </div>
                           )}
                         </div>

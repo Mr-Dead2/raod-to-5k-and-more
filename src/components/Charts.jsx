@@ -1,9 +1,9 @@
 import React from "react";
 import { C, typeColor } from "../data.js";
 
-// 4×7 calendar grid of the plan. Each cell reflects a day's status.
+// N×7 calendar grid of the plan (one row per week). Each cell reflects a status.
 export function StreakGrid({ cells }) {
-  const rows = [0, 1, 2, 3];
+  const rows = Array.from({ length: Math.ceil(cells.length / 7) }, (_, i) => i);
   return (
     <div style={{ display: "grid", gap: 8 }}>
       {rows.map((r) => (

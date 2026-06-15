@@ -9,10 +9,12 @@
     "preview": "npm run build && wrangler dev",
     "icons": "node scripts/gen-icons.mjs",
     "deploy": "npm run build && wrangler deploy",
+    "postinstall": "node scripts/fix-android-proguard.mjs",
+    "android:proguard-fix": "node scripts/fix-android-proguard.mjs",
     "android:assets": "node scripts/gen-app-assets.mjs && npx @capacitor/assets generate --android",
-    "android:sync": "npm run build && npx cap sync android",
+    "android:sync": "npm run build && npx cap sync android && node scripts/fix-android-proguard.mjs",
     "android:open": "npx cap open android",
-    "android:apk": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug"
+    "android:apk": "npm run build && npx cap sync android && node scripts/fix-android-proguard.mjs && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

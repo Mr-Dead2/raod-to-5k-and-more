@@ -7,6 +7,7 @@ import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
+import { useStepCounter, cadenceSupported, ensureMotionPermission } from "../cadence.js";
 import { shareRunCard } from "../share.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
@@ -133,6 +134,19 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
     return n;
   });
 
+  // cadence (steps/min) — counts while tracking and not paused
+  const cadenceOn = cadenceSupported();
+  const tracking = t.status === "tracking" || t.status === "paused";
+  const cad = useStepCounter(cadenceOn && tracking, t.status === "paused" || t.autoPaused);
+
+  // run goal (distance or time), remembered between runs
+  const [goalType, setGoalType] = useState(() => loadSettings().runGoalType || "none"); // none | distance | time
+  const [goalDist, setGoalDist] = useState(() => loadSettings().runGoalDist || 5);
+  const [goalTime, setGoalTime] = useState(() => loadSettings().runGoalTime || 30);
+  const saveGoalType = (v) => { setGoalType(v); saveSettings({ ...loadSettings(), runGoalType: v }); haptic(6); };
+  const setGoalDistP = (fn) => setGoalDist((v) => { const n = Math.max(1, typeof fn === "function" ? fn(v) : fn); saveSettings({ ...loadSettings(), runGoalDist: n }); return n; });
+  const setGoalTimeP = (fn) => setGoalTime((v) => { const n = Math.max(1, typeof fn === "function" ? fn(v) : fn); saveSettings({ ...loadSettings(), runGoalTime: n }); return n; });
+
   // optional Bluetooth heart-rate monitor (chest strap / watch broadcasting HR)
   const hr = useHeartRate();
   const hrAgg = useRef({ sum: 0, n: 0, max: 0 });
@@ -169,6 +183,28 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
   const otherKm = Math.max(0, km - runKm - walkKm);
   const kcal = weightKg * (runKm * KCAL_RUN + walkKm * KCAL_WALK + otherKm * KCAL_RUN);
 
+  // average cadence over the (non-paused) elapsed time
+  const avgCadence = cad.steps > 0 && elapsedSec > 5 ? Math.round(cad.steps / (elapsedSec / 60)) : 0;
+
+  // run goal progress
+  const goalActive = goalType !== "none" && tracking;
+  let goalPct = 0, goalName = "", goalSub = "", goalDone = false;
+  if (goalType === "distance" && goalDist > 0) {
+    goalDone = km >= goalDist;
+    goalPct = Math.min(1, km / goalDist);
+    const rem = Math.max(0, goalDist - km);
+    const eta = rem > 0 && avgPace > 0 ? rem * avgPace : 0;
+    goalName = `${goalDist} km`;
+    goalSub = goalDone ? "Goal reached 🎉" : `${rem.toFixed(2)} km to go${eta ? ` · ~${fmtTime(eta * 1000)} left` : ""}`;
+  } else if (goalType === "time" && goalTime > 0) {
+    const em = elapsedSec / 60;
+    goalDone = em >= goalTime;
+    goalPct = Math.min(1, em / goalTime);
+    const remSec = Math.max(0, goalTime * 60 - elapsedSec);
+    goalName = `${goalTime} min`;
+    goalSub = goalDone ? "Goal reached 🎉" : `${fmtTime(remSec * 1000)} to go · ${km.toFixed(2)} km so far`;
+  }
+
   // run/walk phase derived from elapsed time (so it freezes with pause/auto-pause)
   const cycleSec = (runMin + walkMin) * 60;
   const intervalActive = intervalOn && runMin > 0 && walkMin > 0 && (t.status === "tracking" || t.status === "paused");
@@ -194,12 +230,24 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
     prevPhase.current = phase;
   }, [phase, announcePhaseCue]);
 
+  // celebrate hitting the run goal, once per run
+  const goalCued = useRef(false);
+  useEffect(() => { if (t.status === "idle" || t.status === "finished") goalCued.current = false; }, [t.status]);
+  useEffect(() => {
+    if (goalActive && goalDone && !goalCued.current) {
+      goalCued.current = true;
+      haptic([0, 200, 100, 200, 100, 500]); beep(990, 500);
+      if (audioOnRef.current) speak(goalType === "distance" ? `Goal reached. ${goalDist} kilometers done.` : "Time goal reached. Great work.");
+    }
+  }, [goalActive, goalDone, goalType, goalDist]);
+
   const countIv = useRef(null);
   useEffect(() => () => clearInterval(countIv.current), []);
   const beginRun = async () => {
     haptic(15); primeAudio();
     hrAgg.current = { sum: 0, n: 0, max: 0 };
     await ensureLocationPermission();
+    if (cadenceOn) await ensureMotionPermission();
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);
     countIv.current = setInterval(() => {
@@ -229,6 +277,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
       kcal: Math.round(kcal),
       ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}),
       ...(hrAvg > 0 ? { hrAvg, hrMax } : {}),
+      ...(avgCadence > 0 ? { cadence: avgCadence, steps: cad.steps } : {}),
     });
     haptic([15, 30, 15]);
   };
@@ -295,6 +344,25 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
               <StepCard label="WEIGHT" unit="KG" val={weightKg} set={setWeight} />
             </div>
             <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>Weight is only used for the calorie estimate.</div>
+
+            {/* Run goal */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginBottom: 8, textAlign: "left" }}>RUN GOAL</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["none", "Off"], ["distance", "Distance"], ["time", "Time"]].map(([v, lbl]) => (
+                  <button key={v} onClick={() => saveGoalType(v)} className="chip"
+                    style={{ flex: 1, background: goalType === v ? C.accent : C.surface, color: goalType === v ? C.bg : C.dim, border: `1px solid ${goalType === v ? C.accent : C.line}`, fontWeight: 700 }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              {goalType === "distance" && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="KM" val={goalDist} set={setGoalDistP} /></div>
+              )}
+              {goalType === "time" && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="MIN" val={goalTime} set={setGoalTimeP} /></div>
+              )}
+            </div>
             {hrSupported() && (
               <div style={{ marginTop: 12 }}>
                 {hr.status === "connected" ? (
@@ -331,6 +399,19 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             {t.status === "paused" && <span className="chip" style={{ background: C.surface2, color: C.dim, fontSize: 10 }}>PAUSED</span>}
           </div>
 
+          {goalActive && (
+            <div style={{ background: C.surface, border: `1px solid ${goalDone ? C.accent : C.line}`, borderRadius: 12, padding: "11px 13px", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
+                <span style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700 }}>GOAL · {goalName}</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: goalDone ? C.accent : C.text }}>{Math.round(goalPct * 100)}%</span>
+              </div>
+              <div style={{ height: 7, borderRadius: 5, background: C.surface2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${goalPct * 100}%`, background: C.accent, borderRadius: 5, transition: "width .4s ease" }} />
+              </div>
+              <div style={{ fontSize: 11, color: goalDone ? C.accent : C.dim, fontWeight: 600, marginTop: 7 }}>{goalSub}</div>
+            </div>
+          )}
+
           {phase && (
             <div className="rise" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, background: phase === "RUN" ? `${C.accent}1a` : `${C.easy}1a`, border: `1px solid ${phase === "RUN" ? C.accent : C.easy}`, borderRadius: 14, padding: "12px 14px", marginBottom: 14 }}>
               <div style={{ textAlign: "center" }}>
@@ -344,11 +425,18 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
             <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
           </div>
-          <div style={{ display: "flex", marginBottom: hr.status === "connected" ? 14 : 18 }}>
+          <div style={{ display: "flex", marginBottom: cadenceOn || hr.status === "connected" ? 14 : 18 }}>
             <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
             <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
             <Big label="KCAL" value={Math.round(kcal)} />
           </div>
+          {cadenceOn && (
+            <div style={{ display: "flex", marginBottom: hr.status === "connected" ? 14 : 18 }}>
+              <Big label="CADENCE SPM" value={cad.cadence || "--"} color={C.accent} />
+              <Big label="AVG SPM" value={avgCadence || "--"} />
+              <Big label="STEPS" value={cad.steps || "--"} />
+            </div>
+          )}
           {hr.status === "connected" && (
             <div style={{ display: "flex", marginBottom: 18 }}>
               <Big label="HEART RATE" value={hr.bpm ?? "--"} color={C.warn} />
@@ -398,6 +486,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
             <div style={{ display: "flex", marginBottom: 16 }}>
               <Big label="AVG HR" value={hrAvg} color={C.warn} />
               <Big label="MAX HR" value={hrMax} />
+            </div>
+          )}
+          {avgCadence > 0 && (
+            <div style={{ display: "flex", marginBottom: 16 }}>
+              <Big label="AVG CADENCE" value={`${avgCadence}`} color={C.accent} />
+              <Big label="STEPS" value={cad.steps.toLocaleString()} />
             </div>
           )}
 

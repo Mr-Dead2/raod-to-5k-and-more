@@ -12,7 +12,7 @@ export const ACHIEVEMENTS = [
   { id: "owl", icon: "🦉", title: "Night Owl", desc: "Finish a session after 9 pm", test: (c) => c.lateRuns >= 1 },
   { id: "streak7", icon: "⛓️", title: "Unbroken", desc: "Hit a 7-day streak", test: (c) => c.best >= 7 },
   { id: "marathon", icon: "🗺️", title: "Marathon Month", desc: "Log 42.2 km in total", test: (c) => c.kmLogged >= 42.2 },
-  { id: "complete", icon: "🎖️", title: "Mission Complete", desc: "Finish the whole 4-week plan", test: (c) => c.done >= 28 },
+  { id: "complete", icon: "🎖️", title: "Mission Complete", desc: "Finish the whole plan", test: (c) => c.total > 0 && c.done >= c.total },
 ];
 
 // Returns the set of unlocked achievement ids for a given context.
