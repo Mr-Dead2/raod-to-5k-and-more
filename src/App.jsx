@@ -84,6 +84,7 @@ export default function App() {
   const [open, setOpen] = useState(null);
   const [tab, setTab] = useState("plan"); // plan | stats | history
   const [tipsOpen, setTipsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [toast, setToast] = useState(null);
   const [trackerOpen, setTrackerOpen] = useState(false);
@@ -300,7 +301,7 @@ export default function App() {
   // On-demand AI feedback for a single logged run.
   const coachThisRun = async (item) => {
     if (runFeedbackBusy) return;
-    if (!coachKey.trim()) { setTab("stats"); setCoachErr("Add your free Groq API key in the AI coach card first."); setShowKey(true); return; }
+    if (!coachKey.trim()) { setTab("coach"); setCoachErr("Add your free Groq API key in the AI coach tab first."); setShowKey(true); return; }
     haptic(8); setRunFeedbackBusy(item.key);
     try {
       const e = item.e || {};
@@ -729,137 +730,6 @@ export default function App() {
               <CumulativeArea points={cumulative} />
             </Card>
 
-            {/* AI coach */}
-            <Card style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-                <span style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>AI COACH</span>
-                <span style={{ marginLeft: "auto", fontSize: 10, color: C.dim, fontWeight: 600 }}>powered by Groq</span>
-              </div>
-
-              <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>MY GOAL</label>
-              <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
-                placeholder={DEFAULT_GOAL} style={{ marginTop: 6, marginBottom: 12 }} />
-
-              {/* Conversation thread */}
-              {coachChat.length > 0 && (
-                <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {coachChat.map((m, i) => (
-                    <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
-                      <div style={{
-                        background: m.role === "user" ? C.accent : C.surface2,
-                        color: m.role === "user" ? C.bg : C.text,
-                        border: m.role === "user" ? "none" : `1px solid ${C.line}`,
-                        borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.55,
-                        whiteSpace: "pre-wrap", fontWeight: m.role === "user" ? 600 : 400,
-                      }}>{m.display || m.content}</div>
-                    </div>
-                  ))}
-                  {coachBusy && (
-                    <div style={{ alignSelf: "flex-start", fontSize: 12, color: C.dim, padding: "2px 4px" }}>Coach is thinking…</div>
-                  )}
-                </div>
-              )}
-
-              {coachErr && <div style={{ fontSize: 12, color: C.warn, marginBottom: 10, lineHeight: 1.5 }}>{coachErr}</div>}
-
-              {/* Quick-ask chips */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {QUICK_ASKS.map((q) => (
-                  <button key={q.label} onClick={() => sendToCoach(q.text, q.label)} disabled={coachBusy} className="chip tap"
-                    style={{ background: C.surface2, color: C.text, opacity: coachBusy ? 0.5 : 1 }}>{q.label}</button>
-                ))}
-              </div>
-
-              {/* Ask-anything input */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input className="inp" value={coachInput} onChange={(e) => setCoachInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") askCoachInput(); }}
-                  placeholder="Ask your coach anything…" disabled={coachBusy} />
-                <button onClick={askCoachInput} disabled={coachBusy || !coachInput.trim()} className="tap cta"
-                  style={{ borderRadius: 10, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0, opacity: coachBusy || !coachInput.trim() ? 0.5 : 1 }}>Send</button>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button onClick={analyseCoach} disabled={coachBusy} className="chip tap" style={{ flex: 1, opacity: coachBusy ? 0.5 : 1 }}>
-                  {coachChat.length ? "Re-analyse my training" : "Analyse my training"}
-                </button>
-                {coachChat.length > 0 && (
-                  <button onClick={clearCoachChat} disabled={coachBusy} className="chip tap" style={{ opacity: coachBusy ? 0.5 : 1 }}>Clear</button>
-                )}
-              </div>
-
-              {/* Build a new training block from results */}
-              <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 14, paddingTop: 14 }}>
-                <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginBottom: 4 }}>NEXT TRAINING BLOCK</div>
-                <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
-                  Smashed your goal? Let the coach read your results and add a fresh block that pushes you further. It's appended to your plan — nothing logged is lost.
-                </div>
-
-                {proposedPlan && (() => {
-                  const newWeeks = proposedPlan.weeks.slice(proposedPlan.fromIdx);
-                  const verb = proposedPlan.mode === "adapt" ? "adjusted" : "new";
-                  return (
-                    <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 8 }}>Proposed — {newWeeks.length} {verb} week{newWeeks.length === 1 ? "" : "s"}</div>
-                      {newWeeks.map((w) => {
-                        const km = w.days.reduce((s, d) => s + (d.km || 0), 0);
-                        return (
-                          <div key={w.n} style={{ marginBottom: 8 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Week {w.n} · {w.label} <span style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span></div>
-                            <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
-                              {w.days.map((d) => `${d.d} ${d.km ? d.title : "rest"}`).join(" · ")}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                        <button onClick={applyProposedPlan} className="tap cta" style={{ flex: 1, borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700 }}>
-                          {proposedPlan.mode === "adapt" ? "Update my plan" : "Add to my plan"}
-                        </button>
-                        <button onClick={() => setProposedPlan(null)} className="chip tap">Discard</button>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  <button onClick={generatePlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
-                    {planBusy ? "Working…" : proposedPlan && proposedPlan.mode !== "adapt" ? "Regenerate block" : "Build my next block"}
-                  </button>
-                  <button onClick={adaptPlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
-                    Adjust upcoming
-                  </button>
-                  {isCustomPlan && (
-                    <button onClick={resetPlan} disabled={planBusy} className="chip tap" style={{ opacity: planBusy ? 0.5 : 1 }}>Reset plan</button>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
-                  "Adjust upcoming" re-tunes your not-yet-started sessions from your results and the too easy / too hard feedback you leave on completed days.
-                </div>
-              </div>
-
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 600 }}>
-                  {coachKey ? "Groq key saved · edit setup" : "Set up your free Groq key"}
-                </summary>
-                <div style={{ marginTop: 12 }}>
-                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
-                  <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
-                    onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
-                    autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
-                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
-                    <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
-                  </label>
-                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1, display: "block", marginTop: 12 }}>MODEL</label>
-                  <input className="inp" value={coachModel} onChange={(e) => saveCoachModel(e.target.value)}
-                    placeholder={DEFAULT_MODEL} autoComplete="off" spellCheck={false} style={{ marginTop: 6 }} />
-                  <div style={{ fontSize: 11, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
-                    Get a free key at <span style={{ color: C.text, fontWeight: 600 }}>console.groq.com/keys</span>. It's stored only on this device and sent straight to Groq — no server in between.
-                  </div>
-                </div>
-              </details>
-            </Card>
-
             {/* Achievements */}
             <Card style={{ marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
@@ -880,6 +750,15 @@ export default function App() {
               </div>
             </Card>
 
+            {/* Settings & tools — collapsed by default to keep Stats scannable */}
+            <button onClick={() => { setSettingsOpen((o) => !o); haptic(6); }} className="chip"
+              style={{ width: "100%", textAlign: "left", padding: "13px 15px", marginBottom: 12, background: C.surface, color: C.text, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, border: `1px solid ${C.line}` }}>
+              Settings &amp; tools
+              <span style={{ fontSize: 11, color: C.dim, fontWeight: 600 }}>· appearance, reminders, backup</span>
+              <span style={{ marginLeft: "auto", color: C.dim, fontWeight: 700 }}>{settingsOpen ? "▾" : "▸"}</span>
+            </button>
+
+            {settingsOpen && (<div className="rise">
             {/* Appearance */}
             <Card style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>APPEARANCE</div>
@@ -954,6 +833,159 @@ export default function App() {
                 <button onClick={() => { setSwRun(false); setSwMs(0); haptic(8); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>Reset</button>
               </div>
             </Card>
+            </div>)}
+          </div>
+        )}
+
+        {tab === "coach" && (
+          <div className="rise">
+            <div style={{ display: "flex", alignItems: "baseline", marginBottom: 14 }}>
+              <h2 className="disp" style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>AI coach</h2>
+              <span style={{ marginLeft: "auto", fontSize: 10, color: C.dim, fontWeight: 600 }}>powered by Groq</span>
+            </div>
+
+            {!coachKey && (
+              <Card style={{ marginBottom: 12, borderColor: C.accent }}>
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.55, marginBottom: 10 }}>
+                  Add a free Groq API key to unlock your coach — chat, run analysis, and AI-built plans. It's stored only on this device.
+                </div>
+                <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
+                <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
+                  onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
+                  autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
+                </label>
+                <div style={{ fontSize: 11, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
+                  Get one free at <span style={{ color: C.text, fontWeight: 600 }}>console.groq.com/keys</span>.
+                </div>
+              </Card>
+            )}
+
+            {/* Chat */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>ASK YOUR COACH</div>
+
+              <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>MY GOAL</label>
+              <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
+                placeholder={DEFAULT_GOAL} style={{ marginTop: 6, marginBottom: 12 }} />
+
+              {coachChat.length > 0 && (
+                <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {coachChat.map((m, i) => (
+                    <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
+                      <div style={{
+                        background: m.role === "user" ? C.accent : C.surface2,
+                        color: m.role === "user" ? C.bg : C.text,
+                        border: m.role === "user" ? "none" : `1px solid ${C.line}`,
+                        borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.55,
+                        whiteSpace: "pre-wrap", fontWeight: m.role === "user" ? 600 : 400,
+                      }}>{m.display || m.content}</div>
+                    </div>
+                  ))}
+                  {coachBusy && (
+                    <div style={{ alignSelf: "flex-start", fontSize: 12, color: C.dim, padding: "2px 4px" }}>Coach is thinking…</div>
+                  )}
+                </div>
+              )}
+
+              {coachErr && <div style={{ fontSize: 12, color: C.warn, marginBottom: 10, lineHeight: 1.5 }}>{coachErr}</div>}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                {QUICK_ASKS.map((q) => (
+                  <button key={q.label} onClick={() => sendToCoach(q.text, q.label)} disabled={coachBusy} className="chip tap"
+                    style={{ background: C.surface2, color: C.text, opacity: coachBusy ? 0.5 : 1 }}>{q.label}</button>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input className="inp" value={coachInput} onChange={(e) => setCoachInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") askCoachInput(); }}
+                  placeholder="Ask your coach anything…" disabled={coachBusy} />
+                <button onClick={askCoachInput} disabled={coachBusy || !coachInput.trim()} className="tap cta"
+                  style={{ borderRadius: 10, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0, opacity: coachBusy || !coachInput.trim() ? 0.5 : 1 }}>Send</button>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={analyseCoach} disabled={coachBusy} className="chip tap" style={{ flex: 1, opacity: coachBusy ? 0.5 : 1 }}>
+                  {coachChat.length ? "Re-analyse my training" : "Analyse my training"}
+                </button>
+                {coachChat.length > 0 && (
+                  <button onClick={clearCoachChat} disabled={coachBusy} className="chip tap" style={{ opacity: coachBusy ? 0.5 : 1 }}>Clear</button>
+                )}
+              </div>
+            </Card>
+
+            {/* Plan tools */}
+            <Card style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 4 }}>YOUR TRAINING PLAN</div>
+              <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
+                Build a fresh block when you've smashed your goal, or re-tune your upcoming sessions from the too easy / too hard feedback you leave on completed days. Nothing logged is lost.
+              </div>
+
+              {proposedPlan && (() => {
+                const newWeeks = proposedPlan.weeks.slice(proposedPlan.fromIdx);
+                const verb = proposedPlan.mode === "adapt" ? "adjusted" : "new";
+                return (
+                  <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 8 }}>Proposed — {newWeeks.length} {verb} week{newWeeks.length === 1 ? "" : "s"}</div>
+                    {newWeeks.map((w) => {
+                      const km = w.days.reduce((s, d) => s + (d.km || 0), 0);
+                      return (
+                        <div key={w.n} style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Week {w.n} · {w.label} <span style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span></div>
+                          <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+                            {w.days.map((d) => `${d.d} ${d.km ? d.title : "rest"}`).join(" · ")}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                      <button onClick={applyProposedPlan} className="tap cta" style={{ flex: 1, borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700 }}>
+                        {proposedPlan.mode === "adapt" ? "Update my plan" : "Add to my plan"}
+                      </button>
+                      <button onClick={() => setProposedPlan(null)} className="chip tap">Discard</button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button onClick={generatePlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
+                  {planBusy ? "Working…" : proposedPlan && proposedPlan.mode !== "adapt" ? "Regenerate block" : "Build my next block"}
+                </button>
+                <button onClick={adaptPlan} disabled={planBusy || coachBusy} className="chip tap" style={{ flex: 1, opacity: planBusy || coachBusy ? 0.5 : 1 }}>
+                  Adjust upcoming
+                </button>
+                {isCustomPlan && (
+                  <button onClick={resetPlan} disabled={planBusy} className="chip tap" style={{ opacity: planBusy ? 0.5 : 1 }}>Reset plan</button>
+                )}
+              </div>
+            </Card>
+
+            {/* Setup */}
+            {coachKey && (
+              <Card style={{ marginBottom: 12 }}>
+                <details>
+                  <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 700, letterSpacing: 1 }}>GROQ KEY &amp; MODEL · edit</summary>
+                  <div style={{ marginTop: 12 }}>
+                    <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
+                    <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
+                      onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
+                      autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
+                    <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
+                      <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
+                    </label>
+                    <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1, display: "block", marginTop: 12 }}>MODEL</label>
+                    <input className="inp" value={coachModel} onChange={(e) => saveCoachModel(e.target.value)}
+                      placeholder={DEFAULT_MODEL} autoComplete="off" spellCheck={false} style={{ marginTop: 6 }} />
+                    <div style={{ fontSize: 11, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
+                      Stored only on this device and sent straight to Groq — no server in between.
+                    </div>
+                  </div>
+                </details>
+              </Card>
+            )}
           </div>
         )}
 
@@ -1119,7 +1151,7 @@ export default function App() {
                 <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>🎖️ Mission complete</div>
                 <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>You finished every session. Keep the momentum — let your coach build what's next.</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
-                  <button onClick={() => { haptic(12); setTab("stats"); generatePlan(); }} disabled={planBusy} className="tap cta disp"
+                  <button onClick={() => { haptic(12); setTab("coach"); generatePlan(); }} disabled={planBusy} className="tap cta disp"
                     style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 12, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: planBusy ? 0.6 : 1 }}>
                     🚀 {planBusy ? "Building…" : "Build my next block"}
                   </button>
