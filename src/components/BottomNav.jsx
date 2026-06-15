@@ -34,7 +34,7 @@ export function BottomNav({ tab, onChange }) {
       borderTop: `1px solid ${C.line}`,
       paddingBottom: "env(safe-area-inset-bottom)",
     }}>
-      <div style={{ maxWidth: 620, margin: "0 auto", display: "flex" }}>
+      <div style={{ maxWidth: 620, margin: "0 auto", display: "flex", padding: "8px 8px 4px" }}>
         {items.map((t) => {
           const active = tab === t;
           const color = active ? C.accent : C.dim;
@@ -42,12 +42,18 @@ export function BottomNav({ tab, onChange }) {
             <button key={t} onClick={() => onChange(t)}
               style={{
                 flex: 1, background: "none", border: "none", cursor: "pointer",
-                padding: "10px 0 8px", display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 3, color,
+                padding: "4px 0", display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 4, color,
               }}>
-              {ICONS[t](color)}
-              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, textTransform: "capitalize" }}>{t}</span>
-              <span style={{ width: 14, height: 3, borderRadius: 3, background: active ? C.accent : "transparent", transition: "background .2s" }} />
+              <span style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 52, height: 30, borderRadius: 999,
+                background: active ? `${C.accent}1f` : "transparent",
+                transition: "background .2s ease",
+              }}>
+                {ICONS[t](color)}
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, textTransform: "capitalize", letterSpacing: 0.2 }}>{t}</span>
             </button>
           );
         })}

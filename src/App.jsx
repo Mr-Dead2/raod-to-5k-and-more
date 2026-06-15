@@ -559,14 +559,14 @@ export default function App() {
   }
 
   const Stat = ({ label, value, sub, color, delay = 0 }) => (
-    <div className="card tap stagger" style={{ animationDelay: `${delay}s`, flex: 1, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 12px" }}>
-      <div className="num" style={{ fontSize: 27, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, marginTop: 6, fontWeight: 600 }}>{label}</div>
-      {sub && <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sub}</div>}
+    <div className="card tap stagger" style={{ animationDelay: `${delay}s`, flex: 1, border: `1px solid ${C.line}`, borderRadius: 18, padding: "16px 15px" }}>
+      <div className="num" style={{ fontSize: 29, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 10, letterSpacing: 1.4, color: C.dim, marginTop: 7, fontWeight: 600, textTransform: "uppercase" }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: C.dim, marginTop: 3 }}>{sub}</div>}
     </div>
   );
   const Card = ({ children, style }) => (
-    <div className="card" style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, ...style }}>{children}</div>
+    <div className="card" style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 20, padding: 18, ...style }}>{children}</div>
   );
 
   return (
@@ -587,9 +587,9 @@ export default function App() {
         @keyframes toastIn { from{ opacity:0; transform: translate(-50%, -16px) } to{ opacity:1; transform: translate(-50%,0) } }
         .rise { animation: rise .3s ease both; }
         .pop { animation: pop .32s ease; }
-        .inp { background:${C.bg}; border:1px solid ${C.line}; color:${C.text}; border-radius:10px; padding:9px 11px; width:100%; font-size:14px; font-weight:600; outline:none; }
-        .inp:focus { border-color:${C.accent}; }
-        .chip { cursor:pointer; border-radius:999px; padding:7px 13px; font-size:12px; font-weight:700; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; transition: transform .12s ease, background .15s ease, color .15s ease; }
+        .inp { background:${C.bg}; border:1px solid ${C.line}; color:${C.text}; border-radius:12px; padding:11px 13px; width:100%; font-size:15px; font-weight:600; outline:none; transition: border-color .15s ease, box-shadow .15s ease; }
+        .inp:focus { border-color:${C.accent}; box-shadow:0 0 0 3px ${C.accent}22; }
+        .chip { cursor:pointer; border-radius:999px; padding:8px 14px; font-size:12.5px; font-weight:600; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; transition: transform .12s ease, background .15s ease, color .15s ease, border-color .15s ease; }
         .chip:active { transform: scale(.97); }
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
@@ -599,7 +599,7 @@ export default function App() {
         .leaflet-control-attribution { background: rgba(11,12,15,.72) !important; color:#5f6673 !important; font-size:9px !important; }
         .leaflet-control-attribution a { color:#828a98 !important; }
         /* flat, quietly elevated cards — one surface, one hairline, soft shadow */
-        .card { background:${C.surface}; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+        .card { background:${C.surface}; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
         .card.glow { box-shadow: 0 0 0 1px ${C.accent}; }
         /* solid primary action — no gradient, no shine */
         .cta { border:none !important; background:${C.accent} !important; color:${C.bg} !important; }
@@ -1332,9 +1332,9 @@ export default function App() {
 
 function PB({ label, value, unit, color }) {
   return (
-    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 12, padding: "10px 6px", borderTop: color ? `2px solid ${color}` : "none" }}>
+    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 14, padding: "13px 8px", borderTop: color ? `2px solid ${color}` : `1px solid ${C.line}` }}>
       <div className="num" style={{ fontSize: 16, fontWeight: 700, color: color || C.text }}>{value}<span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
-      <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 4, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 5, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
     </div>
   );
 }
