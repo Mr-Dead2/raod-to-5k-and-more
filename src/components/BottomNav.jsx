@@ -13,6 +13,11 @@ const ICONS = {
       <path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /><rect x="17" y="5" width="3" height="13" />
     </svg>
   ),
+  coach: (a) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z" />
+    </svg>
+  ),
   history: (a) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-9 9" /><path d="M3 12H1m2 0a9 9 0 0 1 .5-3" /><path d="M12 7v5l3 2" />
@@ -21,7 +26,7 @@ const ICONS = {
 };
 
 export function BottomNav({ tab, onChange }) {
-  const items = ["plan", "stats", "history"];
+  const items = ["plan", "stats", "coach", "history"];
   return (
     <nav style={{
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
@@ -29,7 +34,7 @@ export function BottomNav({ tab, onChange }) {
       borderTop: `1px solid ${C.line}`,
       paddingBottom: "env(safe-area-inset-bottom)",
     }}>
-      <div style={{ maxWidth: 620, margin: "0 auto", display: "flex" }}>
+      <div style={{ maxWidth: 620, margin: "0 auto", display: "flex", padding: "8px 8px 4px" }}>
         {items.map((t) => {
           const active = tab === t;
           const color = active ? C.accent : C.dim;
@@ -37,12 +42,18 @@ export function BottomNav({ tab, onChange }) {
             <button key={t} onClick={() => onChange(t)}
               style={{
                 flex: 1, background: "none", border: "none", cursor: "pointer",
-                padding: "10px 0 8px", display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 3, color,
+                padding: "4px 0", display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 4, color,
               }}>
-              {ICONS[t](color)}
-              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, textTransform: "capitalize" }}>{t}</span>
-              <span style={{ width: 14, height: 3, borderRadius: 3, background: active ? C.accent : "transparent", transition: "background .2s" }} />
+              <span style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 52, height: 30, borderRadius: 999,
+                background: active ? `${C.accent}1f` : "transparent",
+                transition: "background .2s ease",
+              }}>
+                {ICONS[t](color)}
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, textTransform: "capitalize", letterSpacing: 0.2 }}>{t}</span>
             </button>
           );
         })}

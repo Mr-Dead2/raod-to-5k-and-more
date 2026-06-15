@@ -72,8 +72,8 @@ export function applyPlan(weeks) {
 
 // Color palette — use these tokens instead of hardcoding hex values.
 export const C = {
-  bg: "#0b0c0f", surface: "#15171c", surface2: "#1c1f26", line: "#272b34",
-  text: "#f2f3ef", dim: "#9298a4", accent: "#c8f73c", run: "#c8f73c",
+  bg: "#0a0b0d", surface: "#131519", surface2: "#1b1e24", line: "#22262d",
+  text: "#f4f5f2", dim: "#8e94a0", accent: "#c8f73c", run: "#c8f73c",
   easy: "#45dcc2", rest: "#5c6373", warn: "#ff6a3d",
 };
 export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);

@@ -96,8 +96,12 @@ front — the other headline reason to go native.
   in place — everything reads `C` at render time, so a re-render is enough.
   `main.jsx` applies the persisted choice (settings key `accent`) before first
   render; the Stats "Appearance" card switches it live.
-- **`src/App.jsx` — one stateful component, three tabs (`plan | stats |
-  history`).** All user progress lives in a single `log` object keyed by the
+- **`src/App.jsx` — one stateful component, four tabs (`plan | stats | coach |
+  history`).** The AI coach has its own tab (chat + plan tools + key setup) to keep
+  Stats scannable; Stats leads with numbers/PBs/charts/achievements and tucks
+  preferences (appearance, reminders, backup, stopwatch) behind a collapsed
+  "Settings & tools" section (`settingsOpen`). All user progress lives in a single
+  `log` object keyed by the
   `w{n}d{i}` keys; each entry is a partial `{ done, km, min, stitch, note, feel,
   date }` (`feel` is a 1–5 effort rating shown via the `FEELS` emoji scale).
   `update(key, patch)` shallow-merges and persists; it stamps `date` the
@@ -166,7 +170,7 @@ front — the other headline reason to go native.
   self-cleaning canvas `confetti()` burst, fired from `update()` on completing a
   day/week/the whole plan. Both respect `prefers-reduced-motion`.
 - **Bottom navigation (`src/components/BottomNav.jsx`)** is the app-like fixed
-  tab bar (Plan/Stats/History) with inline SVG icons; it replaced the old top
+  tab bar (Plan/Stats/Coach/History) with inline SVG icons; it replaced the old top
   chips. Page content reserves bottom padding for it and the safe-area inset.
 - **Live GPS run tracking.** `src/tracker.js` exposes a `useRunTracker()` hook
   over `src/geo.js`'s `startLocationWatch()` (web: `geolocation.watchPosition`;

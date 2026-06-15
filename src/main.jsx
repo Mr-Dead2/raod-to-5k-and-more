@@ -16,7 +16,7 @@ applyPlan(_s.customPlan);
 registerSW({ immediate: true });
 
 // Lock the page background so the area behind the safe-area insets matches the app.
-document.documentElement.style.background = "#0c0d10";
+document.documentElement.style.background = "#0a0b0d";
 document.body.style.margin = "0";
 
 createRoot(document.getElementById("root")).render(
