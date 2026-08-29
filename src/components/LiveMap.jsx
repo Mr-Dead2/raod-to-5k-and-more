@@ -1,7 +1,7 @@
-// Real map for run routes: Leaflet over CARTO's dark OSM tiles (free with
-// attribution, no API key). Used live in the tracker (follow mode keeps the
+// Real map for run routes: Leaflet over CARTO's dark OSM tiles (100% free,
+// no API key required). Used live in the tracker (follow mode keeps the
 // runner centred) and as static thumbnails in History. Tiles need internet;
-// offline the route still draws on the dark background, like the old SVG map.
+// offline the route still draws on the dark background.
 import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";

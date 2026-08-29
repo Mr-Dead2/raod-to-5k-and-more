@@ -91,7 +91,7 @@ function PhaseBreakdown({ runM, walkM, runSec, walkSec }) {
   );
 }
 
-export function RunTracker({ onClose, onSave, days, defaultKey }) {
+export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
   const [audioOn, setAudioOn] = useState(true);
   const [autoPauseOn, setAutoPauseOn] = useState(true);
   const [count, setCount] = useState(null); // 3..1, "GO", or null
@@ -386,6 +386,16 @@ export function RunTracker({ onClose, onSave, days, defaultKey }) {
           </button>
         </div>
       )}
+
+          {targetRoute && (
+            <div style={{ background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <span style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</span>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{targetRoute.name} ({targetRoute.km} km)</div>
+              </div>
+              <span style={{ fontSize: 11, color: C.dim }}>Showing on map</span>
+            </div>
+          )}
 
       {/* TRACKING / PAUSED */}
       {(t.status === "tracking" || t.status === "paused") && (

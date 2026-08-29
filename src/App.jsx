@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { shareRunCard } from "./share.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
+import { RouteMaker } from "./components/RouteMaker.jsx";
 import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan } from "./data.js";
 import { extendPlan, planSplit, adaptedPlan } from "./plan.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
@@ -92,6 +93,8 @@ export default function App() {
   const [histFilter, setHistFilter] = useState("all"); // all | run | gps
   const [openWeeks, setOpenWeeks] = useState({}); // completed weeks expanded by tap
   const [replayRun, setReplayRun] = useState(null); // run object being replayed
+  const [routeMakerOpen, setRouteMakerOpen] = useState(false);
+  const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
   // reminders
   const [remOn, setRemOn] = useState(false);
@@ -656,10 +659,16 @@ export default function App() {
 
         {tab === "stats" && (
           <div className="rise">
-            <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 700, marginBottom: 14, cursor: "pointer" }}>
-              <Icon name="play" size={17} /> Track a run with GPS
-            </button>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                style={{ flex: 1.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
+                <Icon name="play" size={17} /> Track run
+              </button>
+              <button onClick={() => { haptic(10); setRouteMakerOpen(true); }} className="chip tap disp"
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 14, padding: "15px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", background: C.surface, color: C.text, border: `1px solid ${C.line}` }}>
+                🗺️ Route Maker
+              </button>
+            </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} delay={0} />
               <Stat label="STREAK" value={stats.curStreak} sub={`best ${stats.best} day${stats.best === 1 ? "" : "s"}`} delay={0.05} />
@@ -1317,10 +1326,21 @@ export default function App() {
           <RunTracker
             days={FLAT}
             defaultKey={trackDefaultKey}
+            targetRoute={selectedCustomRoute}
             onSave={saveTrackedRun}
             onClose={() => setTrackerOpen(false)}
           />
         </ErrorBoundary>
+      )}
+
+      {routeMakerOpen && (
+        <RouteMaker
+          onClose={() => setRouteMakerOpen(false)}
+          onSelectRoute={(route) => {
+            setSelectedCustomRoute(route);
+            setTrackerOpen(true);
+          }}
+        />
       )}
 
       {replayRun && (
