@@ -1,6 +1,6 @@
 // Interactive Route Maker (Route Planner) component:
-// Allows runners to tap/click on the map to plot a route, calculate distance,
-// undo points, clear, and save/load custom routes.
+// Allows runners to plot custom routes manually or auto-generate a loop/out-and-back route
+// for a target distance (in KM), edit route points, and save/load custom routes.
 import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -36,6 +36,28 @@ export function calcRouteKm(points) {
   return dist;
 }
 
+// Generate a circular loop route around a center point for a target distance (in km)
+function generateLoopRoute(center, targetKm) {
+  const { lat, lng } = center;
+  const numPoints = 12;
+  // Perimeter of regular polygon = 2 * n * R * sin(pi / n)
+  // Radius R = targetKm / (2 * n * sin(pi / n))
+  const radiusKm = targetKm / (2 * numPoints * Math.sin(Math.PI / numPoints));
+
+  // Convert km radius to rough degrees lat/lng
+  const latRadius = radiusKm / 111.0;
+  const lngRadius = radiusKm / (111.0 * Math.cos((lat * Math.PI) / 180));
+
+  const pts = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const angle = (i * 2 * Math.PI) / numPoints;
+    const pLat = lat + latRadius * Math.sin(angle);
+    const pLng = lng + lngRadius * Math.cos(angle);
+    pts.push({ lat: pLat, lng: pLng });
+  }
+  return pts;
+}
+
 export function loadSavedRoutes() {
   const s = loadSettings();
   return Array.isArray(s.savedRoutes) ? s.savedRoutes : [];
@@ -63,6 +85,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
 
   const [points, setPoints] = useState([]); // [{lat, lng}]
   const [routeName, setRouteName] = useState("");
+  const [targetKmInput, setTargetKmInput] = useState("5.0");
   const [savedRoutes, setSavedRoutes] = useState([]);
   const [activeTab, setActiveTab] = useState("draw"); // draw | saved
   const [userLoc, setUserLoc] = useState(null);
@@ -146,7 +169,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
       const isStart = idx === 0;
       const isEnd = idx === points.length - 1;
       const marker = L.circleMarker([p.lat, p.lng], {
-        radius: isStart || isEnd ? 7 : 4,
+        radius: isStart || isEnd ? 7 : 5,
         color: isStart ? C.accent : isEnd ? C.warn : C.accent,
         fillColor: isStart ? C.accent : isEnd ? C.warn : C.bg,
         fillOpacity: 1,
@@ -154,10 +177,24 @@ export function RouteMaker({ onClose, onSelectRoute }) {
       }).addTo(map);
       markersRef.current.push(marker);
     });
+
+    if (points.length > 1) {
+      map.fitBounds(L.latLngBounds(latLngs), { padding: [30, 30], maxZoom: 16 });
+    }
   }, [points]);
 
   const totalKm = calcRouteKm(points);
   const estMinutes = Math.round(totalKm * 6.5); // ~6:30/km pace estimate
+
+  const handleGenerate = () => {
+    const target = parseFloat(targetKmInput);
+    if (!target || target <= 0) return;
+    haptic(10);
+    const center = userLoc || (mapRef.current ? mapRef.current.getCenter() : { lat: 51.505, lng: -0.09 });
+    const generated = generateLoopRoute(center, target);
+    setPoints(generated);
+    setRouteName(`Auto ${target} km Loop`);
+  };
 
   const handleUndo = () => {
     haptic(6);
@@ -192,6 +229,14 @@ export function RouteMaker({ onClose, onSelectRoute }) {
     setSavedRoutes(updated);
   };
 
+  const handleEdit = (route) => {
+    haptic(8);
+    const pts = route.points.map((p) => ({ lat: p[0], lng: p[1] }));
+    setPoints(pts);
+    setRouteName(route.name);
+    setActiveTab("draw");
+  };
+
   const handleSelect = (route) => {
     haptic(10);
     if (onSelectRoute) onSelectRoute(route);
@@ -214,7 +259,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => { setActiveTab("draw"); haptic(5); }} className="chip"
             style={activeTab === "draw" ? { background: C.accent, color: C.bg, border: "none" } : {}}>
-            Draw
+            Draw / Auto
           </button>
           <button onClick={() => { setActiveTab("saved"); haptic(5); }} className="chip"
             style={activeTab === "saved" ? { background: C.accent, color: C.bg, border: "none" } : {}}>
@@ -228,6 +273,17 @@ export function RouteMaker({ onClose, onSelectRoute }) {
 
       {activeTab === "draw" ? (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {/* Target KM Generator Bar */}
+          <div style={{ padding: "8px 14px", background: C.surface, borderBottom: `1px solid ${C.line}`, display: "flex", gap: 10, alignItems: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>AUTO-BUILD ROUTE:</span>
+            <input className="inp" type="number" step="0.5" min="0.5" max="42" value={targetKmInput}
+              onChange={(e) => setTargetKmInput(e.target.value)} style={{ width: 80, padding: "6px 10px", fontSize: 13 }} />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>KM</span>
+            <button onClick={handleGenerate} className="chip cta tap" style={{ fontSize: 12, padding: "7px 14px" }}>
+              ⚡ Auto Build Loop
+            </button>
+          </div>
+
           {/* Map canvas */}
           <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
             <div ref={elRef} style={{ position: "absolute", inset: 0 }} aria-label="Route plotting map" />
@@ -279,7 +335,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
             <div style={{ textAlign: "center", padding: 36, color: C.dim }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>🗺️</div>
               <div className="disp" style={{ fontSize: 18, fontWeight: 700, color: C.text }}>No saved routes yet</div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>Tap "Draw" at the top to tap points on the map and save your runner route.</div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>Enter target KM to auto-build or tap points on the map.</div>
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
@@ -291,13 +347,16 @@ export function RouteMaker({ onClose, onSelectRoute }) {
                       {r.km} km · {r.points.length} points · Created {new Date(r.createdAt).toLocaleDateString()}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => handleEdit(r)} className="chip tap" style={{ fontSize: 12, padding: "6px 10px" }}>
+                      Edit
+                    </button>
                     {onSelectRoute && (
                       <button onClick={() => handleSelect(r)} className="chip cta tap" style={{ fontSize: 12, padding: "6px 12px" }}>
                         Use Route
                       </button>
                     )}
-                    <button onClick={() => handleDelete(r.id)} className="chip tap" style={{ fontSize: 12, color: C.warn, padding: "6px 12px" }}>
+                    <button onClick={() => handleDelete(r.id)} className="chip tap" style={{ fontSize: 12, color: C.warn, padding: "6px 10px" }}>
                       Delete
                     </button>
                   </div>
