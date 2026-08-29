@@ -8,8 +8,8 @@ import { C } from "../data.js";
 import { haptic } from "../celebrate.js";
 import { loadSettings, saveSettings } from "../storage.js";
 
-const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 // Haversine formula to compute distance in km between two lat/lng points
 function haversineKm(p1, p2) {
