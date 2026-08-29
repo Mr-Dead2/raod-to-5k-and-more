@@ -7,8 +7,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
 
-const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 // phase char stored in routes: 'r' = run, 'w' = walk
 const phaseColor = (ph) => (ph === "walk" || ph === "w") ? C.easy : C.accent;
