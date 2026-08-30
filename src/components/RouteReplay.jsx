@@ -6,8 +6,8 @@ import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
 import { haptic } from "../celebrate.js";
 
-const TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 const SPEEDS = [10, 30, 60, 120];
 
 const fmtTime = (ms) => {
