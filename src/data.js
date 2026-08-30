@@ -1,18 +1,4 @@
-// The 4-week training plan. This is the single source of truth: edit a day here
-// and the whole app (rows, "next up", stats, charts) updates from it.
-//
-// It's a properly periodised build, not "just run 5 km every day": each week
-// mixes session types — intervals (run/walk or hard/easy), a tempo, easy
-// recovery runs and one weekly long run — and weekly volume ramps up for three
-// weeks (≈15→17→20 km) then tapers in week 4 into a goal 5K. The long run grows
-// past 5 km in week 3 so race day feels comfortable. "run N min / walk N min"
-// strings are parsed by the interval cues (RunTracker.parseInterval), so keep
-// that exact wording on run/walk days.
-//
-// `DEFAULT_WEEKS` is the built-in plan. The *active* plan (`WEEKS`) can be
-// replaced/extended at runtime by `applyPlan()` — e.g. the AI coach appending a
-// "beyond 5K" block. Everything imports the live `WEEKS`/`FLAT`/`TOTAL` bindings,
-// so swapping the plan + a re-render updates rows, stats, charts and history.
+// Training data + design tokens. The app can extend the plan beyond 5K with the AI coach.
 export const DEFAULT_WEEKS = [
   { n: 1, label: "Build the base", days: [
     { d: "MON", type: "run", title: "3 km intervals", detail: "Run 5 min / walk 1 min × 4 — ease in", km: 3 },
@@ -51,44 +37,17 @@ export const DEFAULT_WEEKS = [
     { d: "SUN", type: "easy", title: "Easy 3 km", detail: "Victory shakeout — you're a 5K runner", km: 3 },
   ]},
 ];
-
-// Flatten a weeks array into a day list. `key` (w{week}d{index}) joins the plan
-// to user progress, so any progress read/write must use that exact format.
 const flatten = (weeks) => weeks.flatMap((w) => w.days.map((day, di) => ({ ...day, key: `w${w.n}d${di}`, week: w.n })));
-
-// The active plan. `let` so applyPlan() can swap it; importers see live bindings.
 export let WEEKS = DEFAULT_WEEKS;
 export let FLAT = flatten(WEEKS);
 export let TOTAL = FLAT.length;
-
-// Swap the active plan (e.g. an AI-extended one). Pass a falsy/empty value to
-// fall back to the built-in plan. Re-derives FLAT/TOTAL in place.
-export function applyPlan(weeks) {
-  WEEKS = Array.isArray(weeks) && weeks.length ? weeks : DEFAULT_WEEKS;
-  FLAT = flatten(WEEKS);
-  TOTAL = FLAT.length;
-  return WEEKS;
-}
-
-// Color palette — use these tokens instead of hardcoding hex values.
-export const C = {
-  bg: "#0a0b0d", surface: "#131519", surface2: "#1b1e24", line: "#22262d",
-  text: "#f4f5f2", dim: "#8e94a0", accent: "#c8f73c", run: "#c8f73c",
-  easy: "#45dcc2", rest: "#5c6373", warn: "#ff6a3d",
-};
-export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
-
-// Selectable accent themes. Everything reads colors from `C` at render time,
-// so switching is just mutating the palette and re-rendering.
+export function applyPlan(weeks) { WEEKS = Array.isArray(weeks) && weeks.length ? weeks : DEFAULT_WEEKS; FLAT = flatten(WEEKS); TOTAL = FLAT.length; return WEEKS; }
+export const C = { bg:"#0a0b0d", surface:"#131519", surface2:"#1b1e24", line:"#252a32", text:"#f4f5f2", dim:"#8e94a0", accent:"#c8f73c", run:"#c8f73c", easy:"#45dcc2", rest:"#5c6373", warn:"#ff6a3d" };
+export const typeColor = (t) => t === "run" ? C.run : t === "easy" ? C.easy : C.rest;
 export const ACCENTS = [
-  { id: "lime", name: "Lime", accent: "#c8f73c" },
-  { id: "sky", name: "Sky", accent: "#5cc8ff" },
-  { id: "gold", name: "Gold", accent: "#ffd84d" },
-  { id: "violet", name: "Violet", accent: "#c08bff" },
+  { id:"lime", name:"Lime", accent:"#c8f73c" },
+  { id:"sky", name:"Sky", accent:"#5cc8ff" },
+  { id:"gold", name:"Gold", accent:"#ffd84d" },
+  { id:"violet", name:"Violet", accent:"#c08bff" },
 ];
-export function applyAccent(id) {
-  const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
-  C.accent = a.accent;
-  C.run = a.accent; // run sessions are highlighted in the accent colour
-  return a.id;
-}
+export function applyAccent(id) { const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0]; C.accent=a.accent; C.run=a.accent; if (typeof document !== "undefined") document.documentElement.style.setProperty("--app-accent", a.accent); return a.id; }
