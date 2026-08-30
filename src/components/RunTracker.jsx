@@ -379,6 +379,14 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
               </div>
             )}
           </div>
+          {targetRoute && (
+            <div style={{ maxWidth: 320, width: "100%", margin: "0 auto", background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 10, textAlign: "left" }}>
+              <div style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{targetRoute.name} ({targetRoute.km} km)</div>
+              <LiveMap points={[]} ghost={targetRoute.points} height={140} interactive={false} />
+              <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Drawn as a dashed guide on your run map.</div>
+            </div>
+          )}
           <button onClick={beginRun} className="chip cta disp"
             style={{ padding: "16px 0", fontSize: 16, fontWeight: 700, maxWidth: 280, margin: "8px auto 0", width: "100%", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" /></svg>
@@ -386,16 +394,6 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
           </button>
         </div>
       )}
-
-          {targetRoute && (
-            <div style={{ background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <span style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</span>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{targetRoute.name} ({targetRoute.km} km)</div>
-              </div>
-              <span style={{ fontSize: 11, color: C.dim }}>Showing on map</span>
-            </div>
-          )}
 
       {/* TRACKING / PAUSED */}
       {(t.status === "tracking" || t.status === "paused") && (
@@ -457,7 +455,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-          <LiveMap points={t.points} height={230} follow />
+          <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={230} follow />
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
@@ -507,7 +505,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
 
           <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-          <LiveMap points={t.points} height={220} />
+          <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={220} />
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>

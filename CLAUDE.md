@@ -216,6 +216,25 @@ front — the other headline reason to go native.
   one-time buzz + voice cue when reached. Both are best-effort and degrade to
   hidden when unsupported; cadence + a `spm` chip also appear in History and feed
   the AI coach summary.
+- **Route planning on the real road network (`src/routing.js` +
+  `src/components/RouteMaker.jsx`).** `routing.js` downloads the runnable ways
+  around a point from the **Overpass API** (free, no key; several mirrors are
+  tried in turn), splits them at junctions into a weighted graph
+  (`WAY_COST` per `highway` tag — footways/parks cheap, primary roads
+  expensive; motorways, `foot=no` and private access are never fetched) and
+  searches *that graph*, so every generated metre is an existing street or
+  path. `buildLoop()` is a randomised walk that heads out, curls consistently
+  in one direction and is closed with a penalised Dijkstra so it doesn't
+  retrace itself; many attempts are scored on distance error, doubling-back and
+  road quality and the best wins. `buildOutBack()` Dijkstras to the nicest node
+  at ~half the target and prefers a different way home. `snapWaypoints()`
+  routes tapped points leg-by-leg along roads. Every result carries `km`,
+  `pathPct`, `busyPct` and `repeatPct`, which the planner surfaces as chips.
+  Networks are memoised per rounded centre+radius, and `radiusForTarget()`
+  keeps the Overpass download as small as the distance allows. RouteMaker has
+  three modes (loop / out & back / draw), a draggable start pin, a "quiet roads
+  & paths" preference and a saved-routes tab; a saved route can be sent to the
+  tracker, where `LiveMap`'s `ghost` prop draws it as a dashed guide line.
 - **Haptics.** `haptic()` in `src/celebrate.js` uses `navigator.vibrate` on the
   web and **`@capacitor/haptics`** in the native app (impact taps for short
   buzzes, timed vibration for longer, raw vibrator for array patterns).
