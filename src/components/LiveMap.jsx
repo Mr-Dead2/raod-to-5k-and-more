@@ -39,10 +39,12 @@ function toSegments(pts) {
 }
 
 // `points` accepts [{lat,lng,phase?}] (live) or [[lat,lng,phase_char?]] (stored routes).
-export function LiveMap({ points, height = 200, follow = false, interactive = true }) {
+// `ghost` is an optional planned route drawn underneath as a dashed guide line.
+export function LiveMap({ points, ghost, height = 200, follow = false, interactive = true }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const segLinesRef = useRef([]);
+  const ghostRef = useRef(null);
   const startRef = useRef(null);
   const endRef = useRef(null);
   const [failed, setFailed] = useState(false);
@@ -75,6 +77,22 @@ export function LiveMap({ points, height = 200, follow = false, interactive = tr
     return () => { clearTimeout(t); try { map.remove(); } catch { /* already gone */ } mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Planned route guide line (e.g. the target route picked in Route Maker).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (ghostRef.current) { map.removeLayer(ghostRef.current); ghostRef.current = null; }
+    const g = (ghost || []).map(norm);
+    if (g.length < 2) return;
+    const lls = g.map((p) => [p.lat, p.lng]);
+    ghostRef.current = L.polyline(lls, {
+      color: C.dim, weight: 3, opacity: 0.8, dashArray: "7 7", lineJoin: "round",
+    }).addTo(map);
+    ghostRef.current.bringToBack();
+    if (!points || !points.length) map.fitBounds(L.latLngBounds(lls), { padding: [26, 26], maxZoom: 17 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghost]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -132,7 +150,7 @@ export function LiveMap({ points, height = 200, follow = false, interactive = tr
           Map unavailable — your run is still being recorded.
         </div>
       )}
-      {!failed && (!points || points.length === 0) && (
+      {!failed && (!points || points.length === 0) && !(ghost && ghost.length > 1) && (
         <div style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
           Waiting for GPS — your route will draw here.
         </div>
