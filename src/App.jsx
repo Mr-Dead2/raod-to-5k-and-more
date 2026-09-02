@@ -9,6 +9,7 @@ import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/
 import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
+import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, askCoach, generatePlanBlock, adaptPlanBlock, coachRun, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
@@ -16,7 +17,7 @@ import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
   enableReminders, disableReminders, showReminderNow, syncMessage,
-  startForegroundScheduler, sendTestNotification, notifyMilestone,
+  startForegroundScheduler, notifyMilestone,
   ensureNotificationPermission,
 } from "./notifications.js";
 import {
@@ -245,13 +246,6 @@ export default function App() {
     setToast(ok
       ? { icon: "🔔", title: "Notifications are on", label: "NOTIFICATIONS" }
       : { icon: "⚠️", title: "Blocked — allow them in your browser settings", label: "NOTIFICATIONS" });
-  };
-  const testNotification = async () => {
-    const ok = await sendTestNotification();
-    if (notificationsSupported()) setPerm(permission());
-    setToast(ok
-      ? { icon: "\u2713", title: "Test notification sent", label: "NOTIFICATIONS" }
-      : { icon: "\u26a0\ufe0f", title: "Couldn't send — permission blocked", label: "NOTIFICATIONS" });
   };
 
   const setAccentTheme = (id) => {
@@ -1105,17 +1099,8 @@ export default function App() {
                 );
               })}
 
-              <button onClick={testNotification} className="chip tap" style={{ marginTop: 12, width: "100%", padding: "11px 0", fontWeight: 700, color: C.text }}>
-                Send me a test notification
-              </button>
-
-              {!isNative() && !notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 10 }}>This browser can't show notifications.</div>}
-              {!isNative() && notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 10 }}>Notifications are blocked — enable them in your browser or site settings.</div>}
-              <div style={{ fontSize: 11, color: C.dim2, marginTop: 10, lineHeight: 1.5 }}>
-                {isNative()
-                  ? "Reminders run in the background and fire even when the app is closed."
-                  : "The web can't guarantee an exact alarm once the app is fully closed. Install it to your home screen for the most reliable delivery."}
-              </div>
+              <div style={{ height: 1, background: C.line, margin: "14px -18px" }} />
+              <NotifDiagnostics />
             </Card>
 
             {/* Data & backup */}

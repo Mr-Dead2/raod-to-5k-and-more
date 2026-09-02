@@ -159,7 +159,14 @@ front — the other headline reason to go native.
   awaiting it before `t.start()` meant the run simply never began;
   `primeRunNotifications()` is deliberately fire-and-forget, and
   `ensureNotificationPermission()` additionally races a timeout so nothing can
-  wedge on it. The settings switches render
+  wedge on it. `src/components/NotifDiagnostics.jsx` is the panel at the bottom
+  of the notification centre: it reports where the app is running (native /
+  installed PWA / plain tab), the build timestamp (`__BUILD_TIME__`, stamped by
+  `vite.config.js` — the first thing to check when a shipped fix appears not to
+  have landed, since an installed PWA or side-loaded APK can be running old
+  code), permission, service-worker and background-sync state, and its test
+  button asks the browser whether a notification *actually exists* afterwards
+  rather than trusting that the call did not throw. The settings switches render
   muted rather than accent while permission is missing, because an accent switch
   that cannot fire is a lie. `showNotice` races `navigator.serviceWorker.ready`
   against a timeout (that promise never rejects, so an uncontrolled page would
