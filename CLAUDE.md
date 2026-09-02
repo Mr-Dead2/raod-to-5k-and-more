@@ -145,8 +145,21 @@ front — the other headline reason to go native.
   button); each notify function checks its own switch, so callers don't have to.
   Natively the alerts go through two Android channels: `stride-live` at
   importance 2 (no buzz — it is rewritten constantly) and `stride-alerts` at
-  importance 4. Be honest in any UX: the web cannot guarantee an exact alarm when
-  fully closed.
+  importance 4. **Native notifications meant to appear now must omit `schedule`
+  entirely** — even `at: now + 100ms` hands them to AlarmManager, which Android
+  12+ downgrades to an inexact alarm without `SCHEDULE_EXACT_ALARM`, so a km
+  split would land minutes late. Only the repeating daily reminder is scheduled.
+  **Permission is only ever granted if something asks**, and the per-type
+  switches default to on, so `ensureNotificationPermission()` is called when a
+  run starts (`primeRunNotifications()` from RunTracker), when an alert switch
+  is turned on, from the settings "Allow notifications" banner and from the test
+  button — never assume an earlier prompt happened. The settings switches render
+  muted rather than accent while permission is missing, because an accent switch
+  that cannot fire is a lie. `showNotice` races `navigator.serviceWorker.ready`
+  against a timeout (that promise never rejects, so an uncontrolled page would
+  otherwise hang every notification call) and falls back to a page-level
+  `Notification`, dropping the SW-only `actions`/`renotify` fields. Be honest in
+  any UX: the web cannot guarantee an exact alarm when fully closed.
 - **AI coach (`src/coach.js`).** An optional, conversational Groq-powered coach in
   the Stats tab. No backend: the user pastes their own free Groq API key (settings
   key `groqKey`, on-device only) and requests go straight from the browser to
