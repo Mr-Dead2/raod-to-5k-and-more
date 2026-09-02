@@ -11,9 +11,9 @@ const _s = loadSettings();
 applyAccent(_s.accent);
 applyPlan(_s.customPlan);
 
-document.documentElement.style.background = "#0a0b0d";
+document.documentElement.style.background = "#07080b";
 document.body.style.margin = "0";
-document.documentElement.style.setProperty("--app-accent", "#c8f73c");
+
 registerSW({ immediate: true });
 
 createRoot(document.getElementById("root")).render(

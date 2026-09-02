@@ -1,5 +1,5 @@
 import React from "react";
-import { C, typeColor } from "../data.js";
+import { C, typeColor, tint } from "../data.js";
 
 // N×7 calendar grid of the plan (one row per week). Each cell reflects a status.
 export function StreakGrid({ cells }) {
@@ -11,15 +11,17 @@ export function StreakGrid({ cells }) {
           <span style={{ width: 22, fontSize: 9, fontWeight: 700, color: C.dim }}>W{r + 1}</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, flex: 1 }}>
             {cells.slice(r * 7, r * 7 + 7).map((c, i) => {
-              let bg = C.surface2, border = "transparent", content = null;
+              // Done = filled in the session colour. Today = accent ring.
+              // A missed past day is a muted dashed well, not an alarm.
+              let bg = C.surface2, border = "transparent", dashed = false;
               if (c.done) { bg = typeColor(c.type); }
-              else if (c.isToday) { border = C.accent; }
-              else if (c.isPast) { bg = C.bg; border = C.warn; }
+              else if (c.isToday) { border = C.accent; bg = tint(C.accent, .12); }
+              else if (c.isPast) { bg = C.bgSoft; border = C.line2; dashed = true; }
               return (
                 <div key={i} title={c.label}
                   style={{
                     aspectRatio: "1", borderRadius: 7, background: bg,
-                    border: `1.5px solid ${border}`, display: "flex",
+                    border: `1.5px ${dashed ? "dashed" : "solid"} ${border}`, display: "flex",
                     alignItems: "center", justifyContent: "center",
                     animation: "cellIn .4s ease both", animationDelay: `${(r * 7 + i) * 0.018}s`,
                   }}>
@@ -35,6 +37,28 @@ export function StreakGrid({ cells }) {
   );
 }
 
+// Every chart paints its marks with the same accent gradient, so the charts
+// read as part of the app rather than as a separate widget. Each <svg> needs
+// its own <defs>, hence the shared component.
+function AccentDefs({ id }) {
+  return (
+    <defs>
+      <linearGradient id={`${id}-stroke`} x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stopColor={C.accent} />
+        <stop offset="100%" stopColor={C.accent2} />
+      </linearGradient>
+      <linearGradient id={`${id}-bar`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={C.accent2} />
+        <stop offset="100%" stopColor={C.accent} />
+      </linearGradient>
+      <linearGradient id={`${id}-fade`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={C.accent} stopOpacity="0.4" />
+        <stop offset="100%" stopColor={C.accent2} stopOpacity="0" />
+      </linearGradient>
+    </defs>
+  );
+}
+
 // Weekly km bars: filled bar = logged, faint bar behind = plan target.
 export function WeeklyBars({ data }) {
   const max = Math.max(1, ...data.map((d) => Math.max(d.value, d.target)));
@@ -43,12 +67,13 @@ export function WeeklyBars({ data }) {
   const y = (v) => H - pad - (v / max) * (H - pad * 2);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Kilometres logged per week">
+      <AccentDefs id="wb" />
       {data.map((d, i) => {
         const x = pad + i * (bw + gap);
         return (
           <g key={i}>
             <rect x={x} y={y(d.target)} width={bw} height={H - pad - y(d.target)} rx="5" fill={C.surface2} />
-            <rect x={x} y={y(d.value)} width={bw} height={H - pad - y(d.value)} rx="5" fill={C.accent}>
+            <rect x={x} y={y(d.value)} width={bw} height={H - pad - y(d.value)} rx="5" fill="url(#wb-bar)">
               <animate attributeName="height" from="0" to={H - pad - y(d.value)} dur="0.5s" fill="freeze" />
               <animate attributeName="y" from={H - pad} to={y(d.value)} dur="0.5s" fill="freeze" />
             </rect>
@@ -85,7 +110,8 @@ export function PaceTrend({ points }) {
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.sec).toFixed(1)}`).join(" ");
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Pace per run over time">
-      <path d={line} fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <AccentDefs id="pt" />
+      <path d={line} fill="none" stroke="url(#pt-stroke)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
       {points.map((p, i) => (
         <circle key={i} cx={x(i)} cy={y(p.sec)} r={p.sec === min ? 4 : 2.5} fill={p.sec === min ? C.accent : C.bg} stroke={C.accent} strokeWidth="2" />
       ))}
@@ -114,14 +140,9 @@ export function CumulativeArea({ points }) {
   const area = `${line} L${x(points.length - 1).toFixed(1)},${H - pad} L${x(0).toFixed(1)},${H - pad} Z`;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cumulative distance">
-      <defs>
-        <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={C.accent} stopOpacity="0.35" />
-          <stop offset="100%" stopColor={C.accent} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#fade)" />
-      <path d={line} fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <AccentDefs id="ca" />
+      <path d={area} fill="url(#ca-fade)" />
+      <path d={line} fill="none" stroke="url(#ca-stroke)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
       {points.map((p, i) => (
         <circle key={i} cx={x(i)} cy={y(p.total)} r="2.5" fill={C.bg} stroke={C.accent} strokeWidth="2" />
       ))}

@@ -15,7 +15,7 @@ const mins = (m) => (m ? `${Math.round(m)} min` : "—");
 
 // Build a compact, model-friendly snapshot of everything the app knows about
 // the runner: totals, consistency, weekly volume, and the most recent sessions.
-export function buildSummary({ stats, weekly, history, goal }) {
+export function buildSummary({ stats, weekly, history, goal, race }) {
   const recent = history
     .filter((h) => parseFloat(h.e.km) > 0)
     .slice(0, 10)
@@ -39,6 +39,9 @@ export function buildSummary({ stats, weekly, history, goal }) {
     });
   return {
     goal: goal || DEFAULT_GOAL,
+    // the race target set on the Stats tab, with the app's own prediction, so
+    // the coach argues with a number rather than inventing one
+    raceGoal: race || null,
     planProgress: `${stats.done}/${TOTAL} plan sessions done`,
     totals: {
       kmLogged: Number(stats.kmLogged.toFixed(1)),

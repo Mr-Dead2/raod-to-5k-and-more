@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { C } from "../data.js";
+import { C, tint } from "../data.js";
 import { LiveMap } from "./LiveMap.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
@@ -9,6 +9,7 @@ import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
 import { useStepCounter, cadenceSupported, ensureMotionPermission } from "../cadence.js";
 import { shareRunCard } from "../share.js";
+import { notifyRunInterval } from "../notifications.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
 const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
@@ -61,7 +62,7 @@ function parseInterval(detail = "") {
 
 function StepCard({ label, val, set, unit = "MIN" }) {
   return (
-    <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+    <div className="card" style={{ flex: 1, borderRadius: 14, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
       <button className="chip" onClick={() => { set((v) => Math.max(0, v - 1)); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>−</button>
       <div style={{ flex: 1, textAlign: "center" }}>
         <div className="num" style={{ fontSize: 18, fontWeight: 700 }}>{val}</div>
@@ -77,7 +78,7 @@ function StepCard({ label, val, set, unit = "MIN" }) {
 function PhaseBreakdown({ runM, walkM, runSec, walkSec }) {
   if (runM + walkM < 20) return null;
   const row = (label, m, sec, color) => (
-    <div style={{ flex: 1, background: C.surface, borderRadius: 12, padding: "9px 10px", textAlign: "center", borderTop: `2px solid ${color}` }}>
+    <div className="card" style={{ flex: 1, borderRadius: 14, padding: "10px", textAlign: "center", borderColor: tint(color, .35), background: `linear-gradient(160deg,${tint(color, .13)},${C.surface} 70%)` }}>
       <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color }}>{label}</div>
       <div className="num" style={{ fontSize: 17, fontWeight: 700, marginTop: 2 }}>{(m / 1000).toFixed(2)} km</div>
       <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0)}/km</div>
@@ -116,6 +117,8 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
     lastCuedPhaseRef.current = ph;
     if (ph === "walk") { haptic([0, 250, 130, 250]); beep(440, 320); if (audioOnRef.current) speak("Walk now"); }
     else { haptic([0, 130, 90, 130, 90, 360]); beep(990, 320); if (audioOnRef.current) speak("Run now"); }
+    // Also post a notice, so the cue lands with the phone pocketed and locked.
+    notifyRunInterval(ph === "walk" ? "Walk now — ease off and recover." : "Run now — pick the pace back up.").catch?.(() => {});
   }, []);
 
   const t = useRunTracker({
@@ -259,9 +262,13 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
   };
 
   const Big = ({ label, value, color }) => (
-    <div style={{ flex: 1, textAlign: "center" }}>
-      <div className="num" style={{ fontSize: 30, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 9, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginTop: 5 }}>{label}</div>
+    <div style={{
+      flex: 1, textAlign: "center", padding: "11px 4px", borderRadius: 14,
+      background: `linear-gradient(160deg,${tint(C.text, .04)},transparent 75%)`,
+      border: `1px solid ${C.line}`,
+    }}>
+      <div className="num" style={{ fontSize: 27, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 8.5, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginTop: 6 }}>{label}</div>
     </div>
   );
 
@@ -284,7 +291,8 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 200, background: C.bg, color: C.text,
+      position: "fixed", inset: 0, zIndex: 200, color: C.text,
+      background: `radial-gradient(120% 60% at 50% -10%, ${tint(C.accent, .12)} 0%, transparent 62%), ${C.bg}`,
       display: "flex", flexDirection: "column",
       padding: "max(18px, env(safe-area-inset-top)) 18px calc(18px + env(safe-area-inset-bottom))",
       fontFamily: "'Manrope', system-ui, sans-serif", overflowY: "auto",
@@ -292,7 +300,7 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
       {/* 3-2-1 countdown overlay */}
       {count != null && (
         <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(11,12,15,0.96)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div key={count} className="num pop" style={{ fontSize: count === "GO" ? 84 : 120, fontWeight: 700, color: C.accent }}>{count}</div>
+          <div key={count} className="num pop gtext" style={{ fontSize: count === "GO" ? 84 : 120, fontWeight: 700 }}>{count}</div>
         </div>
       )}
 
@@ -398,9 +406,9 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
       {/* TRACKING / PAUSED */}
       {(t.status === "tracking" || t.status === "paused") && (
         <div className="rise">
-          <div style={{ textAlign: "center", margin: "8px 0 6px" }}>
-            <div className="num" style={{ fontSize: 30, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{km.toFixed(2)}</div>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginTop: 6 }}>KILOMETRES</div>
+          <div style={{ textAlign: "center", margin: "10px 0 6px" }}>
+            <div className="num gtext" style={{ fontSize: 66, fontWeight: 700, lineHeight: .95 }}>{km.toFixed(2)}</div>
+            <div style={{ fontSize: 10, letterSpacing: 2.4, color: C.dim, fontWeight: 800, marginTop: 8 }}>KILOMETRES</div>
           </div>
           <div style={{ height: 22, textAlign: "center", marginBottom: 10 }}>
             {t.autoPaused && <span className="chip" style={{ background: C.warn, color: C.bg, border: "none", fontSize: 10 }}>AUTO-PAUSED · START MOVING</span>}
@@ -408,14 +416,12 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
           </div>
 
           {goalActive && (
-            <div style={{ background: C.surface, border: `1px solid ${goalDone ? C.accent : C.line}`, borderRadius: 12, padding: "11px 13px", marginBottom: 14 }}>
+            <div className="card" style={{ borderRadius: 14, padding: "12px 14px", marginBottom: 14, borderColor: goalDone ? tint(C.accent, .5) : C.line }}>
               <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
                 <span style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700 }}>GOAL · {goalName}</span>
                 <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: goalDone ? C.accent : C.text }}>{Math.round(goalPct * 100)}%</span>
               </div>
-              <div style={{ height: 7, borderRadius: 5, background: C.surface2, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${goalPct * 100}%`, background: C.accent, borderRadius: 5, transition: "width .4s ease" }} />
-              </div>
+              <div className="bar" style={{ height: 7 }}><i style={{ width: `${goalPct * 100}%` }} /></div>
               <div style={{ fontSize: 11, color: goalDone ? C.accent : C.dim, fontWeight: 600, marginTop: 7 }}>{goalSub}</div>
             </div>
           )}
@@ -428,25 +434,25 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
               </div>
             </div>
           )}
-          <div style={{ display: "flex", marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <Big label="TIME" value={fmtTime(t.elapsedMs)} />
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
             <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
           </div>
-          <div style={{ display: "flex", marginBottom: cadenceOn || hr.status === "connected" ? 14 : 18 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: cadenceOn || hr.status === "connected" ? 10 : 18 }}>
             <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
             <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
             <Big label="KCAL" value={Math.round(kcal)} />
           </div>
           {cadenceOn && (
-            <div style={{ display: "flex", marginBottom: hr.status === "connected" ? 14 : 18 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: hr.status === "connected" ? 10 : 18 }}>
               <Big label="CADENCE SPM" value={cad.cadence || "--"} color={C.accent} />
               <Big label="AVG SPM" value={avgCadence || "--"} />
               <Big label="STEPS" value={cad.steps || "--"} />
             </div>
           )}
           {hr.status === "connected" && (
-            <div style={{ display: "flex", marginBottom: 18 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
               <Big label="HEART RATE" value={hr.bpm ?? "--"} color={C.warn} />
               <Big label="AVG HR" value={hrAvg || "--"} />
               <Big label="MAX HR" value={hrMax || "--"} />
@@ -468,11 +474,11 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
 
           <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
             {t.status === "tracking" ? (
-              <button onClick={() => { haptic(10); t.pause(); }} className="chip" style={{ flex: 1, background: C.surface, color: C.text, padding: "15px 0", fontSize: 15, fontWeight: 800 }}>Pause</button>
+              <button onClick={() => { haptic(10); t.pause(); }} className="chip tap" style={{ flex: 1, color: C.text, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Pause</button>
             ) : (
               <button onClick={() => { haptic(10); t.resume(); }} className="chip cta" style={{ flex: 1, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Resume</button>
             )}
-            <button onClick={() => { haptic(15); t.finish(); }} className="chip" style={{ flex: 1, background: C.warn, color: C.bg, border: "none", padding: "15px 0", fontSize: 15, fontWeight: 800 }}>Finish</button>
+            <button onClick={() => { haptic(15); t.finish(); }} className="chip tap" style={{ flex: 1, background: C.warn, color: C.bg, border: "none", padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Finish</button>
           </div>
         </div>
       )}

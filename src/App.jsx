@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { shareRunCard } from "./share.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
 import { RouteMaker } from "./components/RouteMaker.jsx";
-import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan } from "./data.js";
+import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint } from "./data.js";
 import { extendPlan, planSplit, adaptedPlan } from "./plan.js";
 import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
 import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
@@ -16,8 +16,12 @@ import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permission, loadReminder, saveReminder,
   enableReminders, disableReminders, showReminderNow, syncMessage,
-  startForegroundScheduler,
+  startForegroundScheduler, sendTestNotification, notifyMilestone,
 } from "./notifications.js";
+import {
+  RACES, raceById, bestReference, predictAll, readiness, daysUntil,
+  fmtDuration, CONFIDENCE_LABEL, DEFAULT_GOAL_RACE,
+} from "./goals.js";
 import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
   ensureLocationPermission, styleStatusBar, nativeShareBackup,
@@ -32,12 +36,27 @@ const ICON_PATHS = {
   share: <><circle cx="6" cy="12" r="3" /><circle cx="18" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4" /></>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
   target: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" /></>,
+  map: <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z" /><path d="M9 3v15M15 6v15" /></>,
+  bell: <><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>,
+  flag: <><path d="M4 22V4M4 4h13l-2.5 4L17 12H4" /></>,
 };
 const Icon = ({ name, size = 16, style }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
     strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }} aria-hidden="true">
     {ICON_PATHS[name]}
   </svg>
+);
+
+// Brand mark: speed lines running into a forward chevron.
+const Mark = () => (
+  <span style={{
+    width: 32, height: 32, borderRadius: 11, background: C.grad, flexShrink: 0,
+    display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: C.glow,
+  }}>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke={C.bg} strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 8h6" /><path d="M2 13h4" /><path d="M5 18h4" /><path d="m12 5 7 7-7 7" />
+    </svg>
+  </span>
 );
 
 const DAY = 86400000;
@@ -96,10 +115,15 @@ export default function App() {
   const [routeMakerOpen, setRouteMakerOpen] = useState(false);
   const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
-  // reminders
+  // reminders + per-type notification switches
   const [remOn, setRemOn] = useState(false);
   const [remTime, setRemTime] = useState("18:00");
   const [perm, setPerm] = useState("default");
+  const [notif, setNotif] = useState({ runLive: true, runKm: true, runInterval: true, runFinish: true, milestone: true, skipRest: false });
+
+  // race goal beyond the starter plan
+  const [goalRace, setGoalRace] = useState(DEFAULT_GOAL_RACE);
+  const [goalDate, setGoalDate] = useState("");
 
   // AI coach (Groq)
   const [coachKey, setCoachKey] = useState("");
@@ -136,6 +160,8 @@ export default function App() {
     setCoachKey(s.groqKey || "");
     setCoachGoal(s.goal || DEFAULT_GOAL);
     setCoachModel(s.coachModel || DEFAULT_MODEL);
+    setGoalRace(s.goalRace || DEFAULT_GOAL_RACE);
+    setGoalDate(s.goalDate || "");
     if (Array.isArray(s.coachChat)) setCoachChat(s.coachChat);
     else if (s.coachLast?.text) setCoachChat([{ role: "assistant", content: s.coachLast.text }]); // migrate old single reply
     setLoaded(true);
@@ -143,6 +169,7 @@ export default function App() {
       const r = await loadReminder();
       setRemOn(!!r.enabled);
       setRemTime(r.time || "18:00");
+      setNotif({ runLive: r.runLive !== false, runKm: r.runKm !== false, runInterval: r.runInterval !== false, runFinish: r.runFinish !== false, milestone: r.milestone !== false, skipRest: !!r.skipRest });
     })();
     if (notificationsSupported()) setPerm(permission());
     // native app setup (no-ops on the web)
@@ -192,6 +219,25 @@ export default function App() {
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
+  const saveGoalRace = (id) => { setGoalRace(id); saveSettings({ ...loadSettings(), goalRace: id }); haptic(8); };
+  const saveGoalDate = (d) => { setGoalDate(d); saveSettings({ ...loadSettings(), goalDate: d }); haptic(6); };
+
+  // Per-type notification switches live in IndexedDB with the reminder, so the
+  // service worker sees the same settings while the app is closed.
+  const toggleNotif = async (key) => {
+    const next = { ...notif, [key]: !notif[key] };
+    setNotif(next);
+    haptic(6);
+    await saveReminder({ [key]: next[key] });
+  };
+  const testNotification = async () => {
+    const ok = await sendTestNotification();
+    if (notificationsSupported()) setPerm(permission());
+    setToast(ok
+      ? { icon: "\u2713", title: "Test notification sent", label: "NOTIFICATIONS" }
+      : { icon: "\u26a0\ufe0f", title: "Couldn't send — permission blocked", label: "NOTIFICATIONS" });
+  };
+
   const setAccentTheme = (id) => {
     setAccent(applyAccent(id)); // mutates C; the state change re-renders everything with it
     saveSettings({ ...loadSettings(), accent: id });
@@ -220,7 +266,7 @@ export default function App() {
     setCoachChat(base);
     setCoachBusy(true);
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
       const messages = base.map((m) => ({ role: m.role, content: m.content })); // strip display before sending
       const text = await askCoach({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, messages });
       persistChat([...base, { role: "assistant", content: text }]);
@@ -251,7 +297,7 @@ export default function App() {
     haptic(8);
     setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
       const raw = await generatePlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary });
       const extended = extendPlan(WEEKS, raw);
       if (!extended) throw new Error("The plan came back empty — try again.");
@@ -274,7 +320,7 @@ export default function App() {
     haptic(8);
     setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
       const raw = await adaptPlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, weeks: future });
       const res = adaptedPlan(WEEKS, log, raw);
       if (!res) throw new Error("Couldn't adjust the plan — try again.");
@@ -319,7 +365,7 @@ export default function App() {
         cadenceSpm: e.cadence || null,
         date: e.date ? e.date.slice(0, 10) : null,
       };
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal });
+      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
       const text = await coachRun({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, run });
       setRunFeedback((m) => ({ ...m, [item.key]: text }));
       haptic([10, 20, 10]);
@@ -336,9 +382,9 @@ export default function App() {
     haptic(8);
     // keep the secret Groq key out of backup files (export can open a share sheet)
     const { groqKey, ...safeSettings } = loadSettings();
-    const payload = { app: "road-to-5k", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } };
+    const payload = { app: "stride", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } };
     const json = JSON.stringify(payload, null, 2);
-    const filename = `road-to-5k-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const filename = `stride-backup-${new Date().toISOString().slice(0, 10)}.json`;
     // native: Blob downloads don't work in the WebView — share the file instead
     if (isNative()) {
       const ok = await nativeShareBackup(json, filename);
@@ -380,6 +426,8 @@ export default function App() {
         if (backup.settings.startDate) saveStart(backup.settings.startDate);
         if (backup.settings.accent) setAccentTheme(backup.settings.accent);
         if (backup.settings.customPlan) setActivePlan(backup.settings.customPlan);
+        if (backup.settings.goalRace) saveGoalRace(backup.settings.goalRace);
+        if (backup.settings.goalDate) saveGoalDate(backup.settings.goalDate);
         haptic([10, 30, 10]);
         setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}`, label: "BACKUP" });
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
@@ -387,9 +435,9 @@ export default function App() {
   };
   const shareProgress = async () => {
     haptic(8);
-    const text = `Road to 5K — ${stats.done}/${TOTAL} sessions done, ${stats.kmLogged.toFixed(1)} km logged, best streak ${stats.best} days. ${pct}% of the way to a continuous 5K! 🏃`;
+    const text = `Stride — ${stats.done}/${TOTAL} sessions done, ${stats.kmLogged.toFixed(1)} km logged, best streak ${stats.best} days. ${pct}% of the plan complete! 🏃`;
     try {
-      if (navigator.share) await navigator.share({ title: "Road to 5K", text });
+      if (navigator.share) await navigator.share({ title: "Stride", text });
       else { await navigator.clipboard.writeText(text); setToast({ icon: "📋", title: "Copied to clipboard", label: "SHARE" }); }
     } catch { /* user cancelled */ }
   };
@@ -431,7 +479,7 @@ export default function App() {
     for (let i = lastDone; i >= 0 && log[FLAT[i].key] && log[FLAT[i].key].done; i--) curStreak++;
     const fullWeeks = WEEKS.filter((w) => w.days.every((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done)).length;
     const avgPaceSec = paceKmSum > 0 ? timeSum / paceKmSum : 0;
-    return { kmLogged, done, total: TOTAL, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, projected5kSec: avgPaceSec * 5, bestSplitSec, bestElevM, totalKcal };
+    return { kmLogged, done, total: TOTAL, stitches, runsLogged, best, curStreak, maxKm, bestPaceSec, stitchlessRuns, fullWeeks, avgPaceSec, minTotal, earlyRuns, lateRuns, bestSplitSec, bestElevM, totalKcal };
   }, [log, planVersion]);
 
   const weekly = useMemo(() => WEEKS.map((w) => {
@@ -482,7 +530,11 @@ export default function App() {
     if (!loaded) return;
     if (prevUnlocked.current === null) { prevUnlocked.current = unlocked; return; }
     const fresh = ACHIEVEMENTS.find((a) => unlocked.has(a.id) && !prevUnlocked.current.has(a.id));
-    if (fresh) { setToast(fresh); haptic([10, 30, 10]); }
+    if (fresh) {
+      setToast(fresh);
+      haptic([10, 30, 10]);
+      notifyMilestone(`Stride · ${fresh.icon} ${fresh.title}`, fresh.desc).catch?.(() => {});
+    }
     prevUnlocked.current = unlocked;
   }, [unlocked, loaded]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3400); return () => clearTimeout(t); }, [toast]);
@@ -510,18 +562,44 @@ export default function App() {
     setTab("history");
   };
 
+  // Race goal: the best logged run becomes the reference performance that every
+  // equivalent finish time is extrapolated from.
+  const raceRef = useMemo(() => bestReference(history.map((h) => ({
+    km: parseFloat(h.e.km),
+    sec: h.e.durMs > 0 ? h.e.durMs / 1000 : parseFloat(h.e.min) * 60,
+  }))), [history]);
+  const predictions = useMemo(() => predictAll(raceRef), [raceRef]);
+  const goal = raceById(goalRace);
+  const goalDays = daysUntil(goalDate);
+  const goalReady = goal ? readiness(stats.maxKm, goal.km) : 0;
+  const goalPrediction = predictions.find((p) => p.race.id === goalRace) || null;
+  // Compact form of the race goal handed to the AI coach.
+  const coachRaceGoal = goal ? {
+    race: goal.name,
+    distanceKm: goal.km,
+    raceDate: goalDate || null,
+    daysAway: goalDays,
+    predictedTime: goalPrediction ? fmtDuration(goalPrediction.sec) : null,
+    predictionConfidence: goalPrediction ? goalPrediction.confidence : null,
+    distanceReadinessPct: goalReady,
+  } : null;
+
+  // Rest days can silence the daily nudge; the flag rides along to the service
+  // worker so it stays quiet too.
+  const restToday = todayKey ? FLAT[todayIdx].type === "rest" : false;
+
   const msg = nextUp ? `Today: Week ${nextUp.week} · ${nextUp.d} · ${nextUp.title} — ${nextUp.detail}` : "You finished the plan — go enjoy a victory run! 🎖️";
   const msgRef = useRef(msg);
   msgRef.current = msg;
   useEffect(() => {
     if (!remOn) return;
-    syncMessage(msg);
+    syncMessage(msg, restToday);
     if (isNative()) nativeUpdateReminder(remTime, msg);
-  }, [msg, remOn]);
+  }, [msg, remOn, restToday, remTime]);
 
   useEffect(() => {
-    const stop = startForegroundScheduler(() => msgRef.current);
-    return stop;
+    const id = startForegroundScheduler(() => msgRef.current);
+    return () => clearInterval(id);
   }, []);
 
   const toggleReminder = async () => {
@@ -550,26 +628,37 @@ export default function App() {
   const R = 46, CIRC = 2 * Math.PI * R;
 
   // header schedule eyebrow / countdown
-  let eyebrow = `${WEEKS.length}-WEEK MISSION`, countdown = null;
+  let eyebrow = `${WEEKS.length}-WEEK BLOCK`, countdown = null;
   if (startDate) {
     if (todayIdx < 0) eyebrow = `STARTS IN ${-todayIdx} DAY${-todayIdx === 1 ? "" : "S"}`;
-    else if (todayIdx >= TOTAL) eyebrow = "PLAN COMPLETE 🎖️";
+    else if (todayIdx >= TOTAL) eyebrow = "BLOCK COMPLETE 🎖️";
     else {
       eyebrow = `DAY ${todayIdx + 1} OF ${TOTAL}`;
       const toGoal = TOTAL - 1 - todayIdx;
-      countdown = toGoal > 0 ? `${toGoal} days to your 5K` : "Race day is today! 🏁";
+      countdown = toGoal > 0 ? `${toGoal} days to the last session` : "Final session is today! 🏁";
     }
   }
 
-  const Stat = ({ label, value, sub, color, delay = 0 }) => (
-    <div className="card tap stagger" style={{ animationDelay: `${delay}s`, flex: 1, border: `1px solid ${C.line}`, borderRadius: 18, padding: "16px 15px" }}>
-      <div className="num" style={{ fontSize: 29, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 10, letterSpacing: 1.4, color: C.dim, marginTop: 7, fontWeight: 600, textTransform: "uppercase" }}>{label}</div>
-      {sub && <div style={{ fontSize: 10.5, color: C.dim, marginTop: 3 }}>{sub}</div>}
+  // `hero` renders the number in the accent gradient — reserved for the one
+  // figure per row that matters most.
+  const Stat = ({ label, value, sub, hero, color, delay = 0 }) => (
+    <div className="card stagger" style={{ animationDelay: `${delay}s`, flex: 1, borderRadius: 18, padding: "15px 15px 14px", overflow: "hidden" }}>
+      <div className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 30, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 9.5, letterSpacing: 1.5, color: C.dim, marginTop: 8, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
     </div>
   );
-  const Card = ({ children, style }) => (
-    <div className="card" style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 20, padding: 18, ...style }}>{children}</div>
+  const Card = ({ children, style, className = "" }) => (
+    <div className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
+  );
+  const Label = ({ children, right }) => (
+    <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+      <span className="lab">{children}</span>
+      {right != null && <span style={{ marginLeft: "auto" }}>{right}</span>}
+    </div>
+  );
+  const Bar = ({ pct }) => (
+    <div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
   );
 
   return (
@@ -578,48 +667,90 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         button { font-family: inherit; }
-        .disp { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em; }
-        .num { font-family: 'Space Grotesk', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+        html, body { background:${C.bg}; }
         input { font-family: 'Manrope', sans-serif; }
-        .row, .card { transition: background .15s ease, border-color .15s ease, transform .12s ease, box-shadow .2s ease; }
+        .disp { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.015em; }
+        .num  { font-family: 'Space Grotesk', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
         .tap { cursor: pointer; }
-        .tap:active { transform: scale(.98); }
-        .glow { box-shadow: 0 0 0 1px ${C.accent}; }
-        @keyframes rise { from { opacity:0; transform: translateY(8px) } to { opacity:1; transform:none } }
-        @keyframes pop { 0%{ transform:scale(.6) } 60%{ transform:scale(1.18) } 100%{ transform:scale(1) } }
-        @keyframes toastIn { from{ opacity:0; transform: translate(-50%, -16px) } to{ opacity:1; transform: translate(-50%,0) } }
-        .rise { animation: rise .3s ease both; }
-        .pop { animation: pop .32s ease; }
-        .inp { background:${C.bg}; border:1px solid ${C.line}; color:${C.text}; border-radius:12px; padding:11px 13px; width:100%; font-size:15px; font-weight:600; outline:none; transition: border-color .15s ease, box-shadow .15s ease; }
-        .inp:focus { border-color:${C.accent}; box-shadow:0 0 0 3px ${C.accent}22; }
-        .chip { cursor:pointer; border-radius:999px; padding:8px 14px; font-size:12.5px; font-weight:600; border:1px solid ${C.line}; background:${C.bg}; color:${C.dim}; transition: transform .12s ease, background .15s ease, color .15s ease, border-color .15s ease; }
-        .chip:active { transform: scale(.97); }
+        .tap:active { transform: scale(.975); }
+        .row, .card, .chip { transition: background .18s ease, border-color .18s ease, transform .12s ease, box-shadow .22s ease; }
+
+        /* --- ambient aurora: soft accent light behind the whole page --- */
+        .aurora { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+        .aurora i { position:absolute; display:block; border-radius:50%; filter:blur(72px); }
+        .aurora .a1 { width:min(70vw,520px); height:min(70vw,520px); top:-16vh; left:-16vw;  background:${C.accent};  opacity:.17; animation:drift1 26s ease-in-out infinite alternate; }
+        .aurora .a2 { width:min(60vw,440px); height:min(60vw,440px); top:4vh;   right:-18vw; background:${C.accent2}; opacity:.13; animation:drift2 31s ease-in-out infinite alternate; }
+        .aurora .a3 { width:min(80vw,600px); height:min(80vw,600px); bottom:-24vh; left:10vw; background:${C.accent2}; opacity:.07; animation:drift1 37s ease-in-out infinite alternate-reverse; }
+        @keyframes drift1 { from { transform:translate3d(0,0,0) scale(1) } to { transform:translate3d(6vw,5vh,0) scale(1.14) } }
+        @keyframes drift2 { from { transform:translate3d(0,0,0) scale(1.08) } to { transform:translate3d(-7vw,7vh,0) scale(.94) } }
+
+        /* --- surfaces: lit from the top-left, hairline highlight on the rim --- */
+        .card {
+          position:relative;
+          background:linear-gradient(158deg, ${tint(C.text, 0.045)} 0%, ${C.surface} 34%, ${C.bgSoft} 100%);
+          border:1px solid ${C.line};
+          box-shadow:0 20px 44px -32px rgba(0,0,0,.95), inset 0 1px 0 ${tint(C.text, 0.05)};
+        }
+        .card.glow { border-color:${tint(C.accent, .45)}; box-shadow:${C.glow}, inset 0 1px 0 ${tint(C.accent, .16)}; }
+        .card.accented { background:linear-gradient(150deg, ${tint(C.accent, .16)} 0%, ${tint(C.accent2, .07)} 46%, ${C.bgSoft} 100%); border-color:${tint(C.accent, .3)}; }
+
+        /* --- primary action: the accent gradient, glowing --- */
+        .cta { border:none !important; background:${C.grad} !important; color:${C.bg} !important; box-shadow:${C.glow}; }
+        .cta:disabled { box-shadow:none; }
+
+        /* gradient numerals for hero figures */
+        .gtext { background:${C.grad}; -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+        .inp { background:${C.bgSoft}; border:1px solid ${C.line}; color:${C.text}; border-radius:12px; padding:11px 13px; width:100%; font-size:15px; font-weight:600; outline:none; transition:border-color .15s ease, box-shadow .15s ease; }
+        .inp:focus { border-color:${C.accent}; box-shadow:0 0 0 3px ${tint(C.accent, .16)}; }
+
+        .chip { cursor:pointer; border-radius:999px; padding:8px 14px; font-size:12.5px; font-weight:600; border:1px solid ${C.line}; background:${C.surface2}; color:${C.dim}; }
+        .chip:active { transform:scale(.97); }
+        .chip.on { background:${C.grad}; color:${C.bg}; border-color:transparent; font-weight:800; box-shadow:${C.glow}; }
+
+        .lab { font-size:10px; letter-spacing:2px; font-weight:800; color:${C.dim}; text-transform:uppercase; }
+
+        /* thin gradient progress bar, used for weeks, goals and readiness */
+        .bar { height:6px; border-radius:999px; background:${C.bgSoft}; overflow:hidden; border:1px solid ${C.line}; }
+        .bar > i { display:block; height:100%; border-radius:999px; background:${C.grad}; transition:width .55s cubic-bezier(.2,.8,.2,1); }
+
         .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
-        html, body { background:${C.bg}; }
+
         /* Leaflet chrome matched to the dark theme */
         .leaflet-container { background:${C.bg}; font-family:'Manrope', system-ui, sans-serif; }
-        .leaflet-control-attribution { background: rgba(11,12,15,.72) !important; color:#5f6673 !important; font-size:9px !important; }
+        .leaflet-control-attribution { background:rgba(7,8,11,.72) !important; color:#5f6673 !important; font-size:9px !important; }
         .leaflet-control-attribution a { color:#828a98 !important; }
-        /* flat, quietly elevated cards — one surface, one hairline, soft shadow */
-        .card { background:${C.surface}; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
-        .card.glow { box-shadow: 0 0 0 1px ${C.accent}; }
-        /* solid primary action — no gradient, no shine */
-        .cta { border:none !important; background:${C.accent} !important; color:${C.bg} !important; }
-        /* staggered fade/scale used by stat cards, weeks and grid cells */
-        @keyframes cellIn { from{ opacity:0; transform: scale(.5) } to{ opacity:1; transform: none } }
-        @keyframes slideUp { from{ opacity:0; transform: translateY(14px) } to{ opacity:1; transform:none } }
-        .stagger { opacity:0; animation: slideUp .45s ease forwards; }
-        @keyframes spin { to { transform: rotate(360deg) } }
-        .spin { animation: spin 1s linear infinite; }
-        @media (prefers-reduced-motion: reduce){ .stagger,.spin{ animation:none !important } .stagger{ opacity:1 } }
+
+        @keyframes rise { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }
+        @keyframes pop { 0%{ transform:scale(.6) } 60%{ transform:scale(1.18) } 100%{ transform:scale(1) } }
+        @keyframes toastIn { from{ opacity:0; transform:translate(-50%,-16px) } to{ opacity:1; transform:translate(-50%,0) } }
+        @keyframes cellIn { from{ opacity:0; transform:scale(.5) } to{ opacity:1; transform:none } }
+        @keyframes slideUp { from{ opacity:0; transform:translateY(14px) } to{ opacity:1; transform:none } }
+        @keyframes spin { to { transform:rotate(360deg) } }
+        @keyframes pulseRing { 0%,100% { opacity:.45 } 50% { opacity:.9 } }
+        .rise { animation:rise .3s ease both; }
+        .pop { animation:pop .32s ease; }
+        .stagger { opacity:0; animation:slideUp .45s ease forwards; }
+        .spin { animation:spin 1s linear infinite; }
+
+        @media (prefers-reduced-motion: reduce) {
+          .stagger, .spin, .aurora i { animation:none !important; }
+          .stagger { opacity:1; }
+        }
       `}</style>
 
       {/* Achievement toast */}
       {toast && (
         <div style={{ position: "fixed", top: "calc(14px + env(safe-area-inset-top))", left: "50%", transform: "translateX(-50%)", zIndex: 9998, animation: "toastIn .3s ease both", width: "calc(100% - 32px)", maxWidth: 380 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 14, padding: "12px 14px", boxShadow: "0 8px 24px -12px rgba(0,0,0,.6)" }}>
-            <span style={{ fontSize: 22 }}>{toast.icon}</span>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, borderRadius: 16, padding: "13px 15px",
+            background: `linear-gradient(150deg,${tint(C.accent, .2)},${C.surface2} 60%)`,
+            border: `1px solid ${tint(C.accent, .5)}`,
+            boxShadow: `${C.glow}, 0 12px 30px -14px rgba(0,0,0,.8)`,
+            backdropFilter: "blur(10px)",
+          }}>
+            <span style={{ fontSize: 23 }}>{toast.icon}</span>
             <div>
               <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.accent, fontWeight: 800 }}>{toast.label || "ACHIEVEMENT UNLOCKED"}</div>
               <div className="disp" style={{ fontSize: 15, fontWeight: 700 }}>{toast.title}</div>
@@ -628,32 +759,43 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))" }}>
+      {/* Ambient accent light behind everything */}
+      <div className="aurora" aria-hidden="true"><i className="a1" /><i className="a2" /><i className="a3" /></div>
+
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(112px + env(safe-area-inset-bottom))" }}>
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-          <div>
-            <div style={{ fontSize: 10, letterSpacing: 2.5, color: C.dim, fontWeight: 700 }}>{eyebrow}</div>
-            <h1 className="disp" style={{ fontSize: 28, fontWeight: 700, margin: "3px 0 0", letterSpacing: -0.8 }}>
-              Road to <span style={{ color: C.accent }}>5K</span>
-            </h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <Mark />
+              <h1 className="disp gtext" style={{ fontSize: 30, fontWeight: 700, margin: 0, letterSpacing: -1 }}>Stride</h1>
+            </div>
+            <div style={{ fontSize: 9.5, letterSpacing: 2.4, color: C.dim, fontWeight: 800, marginTop: 6 }}>{eyebrow}</div>
             {countdown && <div style={{ fontSize: 12, color: C.dim, marginTop: 3, fontWeight: 600 }}>{countdown}</div>}
           </div>
-          <div style={{ position: "relative", width: 100, height: 100 }}>
+          <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
             <svg width="100" height="100" style={{ transform: "rotate(-90deg)" }}>
+              <defs>
+                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor={C.accent} />
+                  <stop offset="100%" stopColor={C.accent2} />
+                </linearGradient>
+              </defs>
               <circle cx="50" cy="50" r={R} fill="none" stroke={C.surface2} strokeWidth="7" />
-              <circle cx="50" cy="50" r={R} fill="none" stroke={C.accent} strokeWidth="7" strokeLinecap="round"
-                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)} style={{ transition: "stroke-dashoffset .25s ease" }} />
+              <circle cx="50" cy="50" r={R} fill="none" stroke="url(#ringGrad)" strokeWidth="7" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)}
+                style={{ transition: "stroke-dashoffset .45s cubic-bezier(.2,.8,.2,1)", filter: `drop-shadow(0 0 7px ${tint(C.accent, .5)})` }} />
             </svg>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <span className="num" style={{ fontSize: 23, fontWeight: 700 }}>{pctShown}%</span>
-              <span style={{ fontSize: 9, color: C.dim, letterSpacing: 1 }}>{stats.done}/{TOTAL} DAYS</span>
+              <span className="num gtext" style={{ fontSize: 24, fontWeight: 700 }}>{pctShown}%</span>
+              <span style={{ fontSize: 8.5, color: C.dim, letterSpacing: 1.2, fontWeight: 700 }}>{stats.done}/{TOTAL} DAYS</span>
             </div>
           </div>
         </div>
 
         {installEvt && (
           <button onClick={doInstall} className="chip" style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.accent, color: C.bg, border: "none", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Icon name="download" size={15} /> Install Road to 5K on your phone
+            <Icon name="download" size={15} /> Install Stride on your phone
           </button>
         )}
 
@@ -661,16 +803,16 @@ export default function App() {
           <div className="rise">
             <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
               <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-                style={{ flex: 1.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, padding: "15px 0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
+                style={{ flex: 1.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 16, padding: "16px 0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
                 <Icon name="play" size={17} /> Track run
               </button>
-              <button onClick={() => { haptic(10); setRouteMakerOpen(true); }} className="chip tap disp"
-                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 14, padding: "15px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", background: C.surface, color: C.text, border: `1px solid ${C.line}` }}>
-                🗺️ Route Maker
+              <button onClick={() => { haptic(10); setRouteMakerOpen(true); }} className="card tap disp"
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 16, padding: "16px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", color: C.text }}>
+                <Icon name="map" size={16} /> Routes
               </button>
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} color={C.accent} delay={0} />
+              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} hero delay={0} />
               <Stat label="STREAK" value={stats.curStreak} sub={`best ${stats.best} day${stats.best === 1 ? "" : "s"}`} delay={0.05} />
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -684,7 +826,7 @@ export default function App() {
 
             {/* Personal bests */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>PERSONAL RECORDS</div>
+              <Label>Personal records</Label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <PB label="BEST PACE" value={fmtPace(stats.bestPaceSec) || "—"} unit="/km" color={C.accent} />
                 <PB label="LONGEST RUN" value={stats.maxKm ? stats.maxKm + " km" : "—"} />
@@ -697,22 +839,94 @@ export default function App() {
               </div>
             </Card>
 
-            {stats.projected5kSec > 0 && (
-              <Card style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 12, background: `${C.accent}1a`, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Icon name="target" size={22} />
+            {/* Race goal — the target that replaces "get to 5K" once it's done */}
+            <Card className="accented" style={{ marginBottom: 12 }}>
+              <Label right={goalDays != null && (
+                <span className="num" style={{ fontSize: 11, fontWeight: 800, color: goalDays < 0 ? C.dim : C.accent }}>
+                  {goalDays > 0 ? `${goalDays} DAY${goalDays === 1 ? "" : "S"} TO GO` : goalDays === 0 ? "RACE DAY 🏁" : "DONE"}
+                </span>
+              )}>My next goal</Label>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                {RACES.filter((r) => r.km >= 5).map((r) => (
+                  <button key={r.id} onClick={() => saveGoalRace(r.id)} className={`chip tap${goalRace === r.id ? " on" : ""}`} style={{ flex: 1 }}>{r.chip}</button>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 14, marginBottom: 12 }}>
+                <div>
+                  <div className="lab" style={{ marginBottom: 3 }}>Target time</div>
+                  <div className="num gtext" style={{ fontSize: 34, fontWeight: 700, lineHeight: 1 }}>
+                    {goalPrediction ? fmtDuration(goalPrediction.sec) : "—"}
+                  </div>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>PROJECTED 5K TIME</div>
-                  <div className="num" style={{ fontSize: 24, fontWeight: 700, color: C.accent }}>{fmtPace(stats.projected5kSec)}</div>
-                  <div style={{ fontSize: 11, color: C.dim }}>at your average logged pace ({fmtPace(stats.avgPaceSec)}/km)</div>
+                <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+                  {goalPrediction && raceRef
+                    ? <>predicted from your {raceRef.km.toFixed(1)} km in {fmtDuration(raceRef.sec)}<br /><span style={{ color: C.dim2 }}>{CONFIDENCE_LABEL[goalPrediction.confidence]}</span></>
+                    : "Log a timed run and a predicted finish appears here."}
                 </div>
-              </Card>
-            )}
+              </div>
+
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 5 }}>
+                  <span style={{ fontSize: 11, color: C.dim, fontWeight: 600 }}>Distance readiness</span>
+                  <span className="num" style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: goalReady >= 100 ? C.good : C.text }}>{goalReady}%</span>
+                </div>
+                <Bar pct={goalReady} />
+                <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 6 }}>
+                  {goal ? (goalReady >= 100
+                    ? `Your longest run already covers the distance. You're ready.`
+                    : `Longest run so far ${stats.maxKm || 0} km. The ${goal.name} is ${goal.km.toFixed(goal.km % 1 ? 1 : 0)} km.`) : ""}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <span style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>Race day</span>
+                <input className="inp" type="date" value={goalDate} onChange={(e) => saveGoalDate(e.target.value)} style={{ width: "auto" }} />
+                {goalDate && <button onClick={() => saveGoalDate("")} className="chip tap" style={{ fontSize: 11, padding: "6px 11px" }}>Clear</button>}
+              </div>
+            </Card>
+
+            {/* Equivalent finish times across every distance */}
+            <Card style={{ marginBottom: 12 }}>
+              <Label right={raceRef && <span style={{ fontSize: 10, color: C.dim2, fontWeight: 600 }}>from {raceRef.km.toFixed(1)} km</span>}>
+                Race predictions
+              </Label>
+              {predictions.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.55 }}>
+                  Log a run with both distance and time — or track one with GPS — and every equivalent race time shows up here.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6 }}>
+                    {predictions.map((p) => {
+                      const isGoal = p.race.id === goalRace;
+                      return (
+                        <button key={p.race.id} onClick={() => saveGoalRace(p.race.id)} className="tap"
+                          style={{
+                            textAlign: "center", padding: "12px 3px 10px", borderRadius: 13, cursor: "pointer",
+                            background: isGoal ? tint(C.accent, .13) : C.surface2,
+                            border: `1px solid ${isGoal ? tint(C.accent, .5) : C.line}`,
+                          }}>
+                          <div style={{ fontSize: 8.5, letterSpacing: 1, color: isGoal ? C.accent : C.dim, fontWeight: 800 }}>{p.race.short}</div>
+                          <div className="num" style={{ fontSize: 13.5, fontWeight: 700, color: C.text, marginTop: 5 }}>{fmtDuration(p.sec)}</div>
+                          <div style={{ fontSize: 8, color: C.dim2, marginTop: 3, fontWeight: 600 }}>
+                            {p.confidence === "high" ? "solid" : p.confidence === "fair" ? "fair" : "rough"}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 10, lineHeight: 1.5 }}>
+                    Riegel equivalents from your best logged effort. The further the jump from that distance, the rougher the guess.
+                  </div>
+                </>
+              )}
+            </Card>
 
             {/* Schedule / today */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 6 }}>PLAN SCHEDULE</div>
+              <Label>Plan schedule</Label>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>I started on</span>
                 <input className="inp" type="date" value={startDate} onChange={(e) => saveStart(e.target.value)} style={{ width: "auto" }} />
@@ -727,15 +941,15 @@ export default function App() {
 
             {/* Charts */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>KM PER WEEK · LOGGED VS PLAN</div>
+              <Label>Km per week · logged vs plan</Label>
               <WeeklyBars data={weekly} />
             </Card>
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>PACE TREND · UP MEANS FASTER</div>
+              <Label>Pace trend · up means faster</Label>
               <PaceTrend points={paceTrend} />
             </Card>
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>CUMULATIVE DISTANCE</div>
+              <Label>Cumulative distance</Label>
               <CumulativeArea points={cumulative} />
             </Card>
 
@@ -750,7 +964,12 @@ export default function App() {
                   const got = unlocked.has(a.id);
                   return (
                     <div key={a.id} title={`${a.title} — ${a.desc}`}
-                      style={{ textAlign: "center", padding: "10px 4px", borderRadius: 12, background: got ? C.surface2 : "transparent", border: `1px solid ${got ? C.line : "transparent"}`, opacity: got ? 1 : 0.4 }}>
+                      style={{
+                        textAlign: "center", padding: "11px 4px", borderRadius: 13,
+                        background: got ? `linear-gradient(150deg,${tint(C.accent, .14)},${tint(C.accent2, .06)})` : "transparent",
+                        border: `1px solid ${got ? tint(C.accent, .3) : "transparent"}`,
+                        opacity: got ? 1 : 0.38,
+                      }}>
                       <div style={{ fontSize: 24, filter: got ? "none" : "grayscale(1)" }}>{a.icon}</div>
                       <div style={{ fontSize: 9, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 4, lineHeight: 1.2 }}>{a.title}</div>
                     </div>
@@ -760,38 +979,49 @@ export default function App() {
             </Card>
 
             {/* Settings & tools — collapsed by default to keep Stats scannable */}
-            <button onClick={() => { setSettingsOpen((o) => !o); haptic(6); }} className="chip"
-              style={{ width: "100%", textAlign: "left", padding: "13px 15px", marginBottom: 12, background: C.surface, color: C.text, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, border: `1px solid ${C.line}` }}>
+            <button onClick={() => { setSettingsOpen((o) => !o); haptic(6); }} className="card tap"
+              style={{ width: "100%", textAlign: "left", padding: "14px 16px", marginBottom: 12, borderRadius: 16, color: C.text, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 9 }}>
+              <span style={{ color: C.accent, display: "flex" }}><Icon name="bell" size={16} /></span>
               Settings &amp; tools
-              <span style={{ fontSize: 11, color: C.dim, fontWeight: 600 }}>· appearance, reminders, backup</span>
+              <span style={{ fontSize: 11, color: C.dim2, fontWeight: 600 }}>· appearance, alerts, backup</span>
               <span style={{ marginLeft: "auto", color: C.dim, fontWeight: 700 }}>{settingsOpen ? "▾" : "▸"}</span>
             </button>
 
             {settingsOpen && (<div className="rise">
             {/* Appearance */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>APPEARANCE</div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <Label>Appearance</Label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
                 {ACCENTS.map((a) => {
                   const active = accent === a.id;
                   return (
                     <button key={a.id} onClick={() => setAccentTheme(a.id)} className="tap"
-                      style={{ flex: 1, cursor: "pointer", borderRadius: 12, padding: "10px 4px", background: C.surface2, border: `1px solid ${active ? a.accent : C.line}` }}>
-                      <span style={{ display: "block", width: 18, height: 18, borderRadius: "50%", background: a.accent, margin: "0 auto 6px" }} />
-                      <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.text : C.dim }}>{a.name}</span>
+                      style={{
+                        cursor: "pointer", borderRadius: 14, padding: "12px 4px",
+                        background: active ? `linear-gradient(150deg,${a.accent}26,${a.accent2}12)` : C.surface2,
+                        border: `1px solid ${active ? a.accent : C.line}`,
+                      }}>
+                      <span style={{
+                        display: "block", width: 22, height: 22, borderRadius: "50%", margin: "0 auto 7px",
+                        background: `linear-gradient(135deg,${a.accent},${a.accent2})`,
+                        boxShadow: active ? `0 0 12px -2px ${a.accent}` : "none",
+                      }} />
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: active ? C.text : C.dim }}>{a.name}</span>
                     </button>
                   );
                 })}
               </div>
-              <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Pick the accent colour used across the whole app.</div>
+              <div style={{ fontSize: 11, color: C.dim2, marginTop: 10 }}>
+                Every gradient, chart and highlight in the app follows this pair of colours.
+              </div>
             </Card>
 
-            {/* Reminders */}
+            {/* Notifications */}
             <Card style={{ marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>DAILY REMINDER</div>
-                  <div style={{ fontSize: 13, color: C.text, marginTop: 3, fontWeight: 600 }}>Get nudged to do your session</div>
+                  <div className="lab" style={{ marginBottom: 0 }}>Daily reminder</div>
+                  <div style={{ fontSize: 13, color: C.text, marginTop: 4, fontWeight: 600 }}>Get nudged to do your session</div>
                 </div>
                 <button onClick={toggleReminder} className="sw" style={{ background: remOn ? C.accent : C.line }} aria-label="Toggle reminders">
                   <b style={{ left: remOn ? 22 : 3 }} />
@@ -803,18 +1033,48 @@ export default function App() {
                   <input className="inp" type="time" value={remTime} onChange={(e) => changeTime(e.target.value)} style={{ width: "auto" }} />
                 </div>
               )}
-              {!isNative() && !notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>This browser can't show notifications.</div>}
-              {!isNative() && notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 8 }}>Notifications are blocked — enable them in your browser/site settings.</div>}
-              <div style={{ fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
+
+              <div style={{ height: 1, background: C.line, margin: "14px -18px" }} />
+
+              <div className="lab" style={{ marginBottom: 4 }}>What Stride tells you</div>
+              <div style={{ fontSize: 11, color: C.dim2, marginBottom: 10, lineHeight: 1.5 }}>
+                Alerts land on your lock screen, so they reach you with the phone pocketed mid-run.
+              </div>
+              {[
+                ["runLive", "Run in progress", "A live notice with distance, time and pace while you track"],
+                ["runKm", "Kilometre splits", "A buzz and your split time at every full kilometre"],
+                ["runInterval", "Run / walk switches", "Tells you when to run and when to walk"],
+                ["runFinish", "Run finished", "A summary the moment you stop the clock"],
+                ["milestone", "Achievements", "When you unlock a badge"],
+                ["skipRest", "Stay quiet on rest days", "Skip the daily nudge when the plan says rest"],
+              ].map(([key, title, desc]) => (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{title}</div>
+                    <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
+                  </div>
+                  <button onClick={() => toggleNotif(key)} className="sw" style={{ background: notif[key] ? C.accent : C.line, flexShrink: 0 }} aria-label={`Toggle ${title}`}>
+                    <b style={{ left: notif[key] ? 22 : 3 }} />
+                  </button>
+                </div>
+              ))}
+
+              <button onClick={testNotification} className="chip tap" style={{ marginTop: 12, width: "100%", padding: "11px 0", fontWeight: 700, color: C.text }}>
+                Send me a test notification
+              </button>
+
+              {!isNative() && !notificationsSupported() && <div style={{ fontSize: 11, color: C.warn, marginTop: 10 }}>This browser can't show notifications.</div>}
+              {!isNative() && notificationsSupported() && perm === "denied" && <div style={{ fontSize: 11, color: C.warn, marginTop: 10 }}>Notifications are blocked — enable them in your browser or site settings.</div>}
+              <div style={{ fontSize: 11, color: C.dim2, marginTop: 10, lineHeight: 1.5 }}>
                 {isNative()
                   ? "Reminders run in the background and fire even when the app is closed."
-                  : "Tip: install the app (Add to Home Screen) for the most reliable reminders."}
+                  : "The web can't guarantee an exact alarm once the app is fully closed. Install it to your home screen for the most reliable delivery."}
               </div>
             </Card>
 
             {/* Data & backup */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>DATA & BACKUP</div>
+              <Label>Data &amp; backup</Label>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={exportData} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="download" size={14} /> Export</button>
                 <button onClick={() => importRef.current?.click()} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="upload" size={14} /> Import</button>
@@ -832,11 +1092,11 @@ export default function App() {
 
             {/* Stopwatch — treadmill / no-GPS fallback */}
             <Card style={{ textAlign: "center", padding: 18 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>TREADMILL STOPWATCH · NO GPS</div>
-              <div className="num" style={{ fontSize: 52, fontWeight: 700, margin: "6px 0 12px", color: swRun ? C.accent : C.text }}>{fmt(swMs)}</div>
+              <Label>Treadmill stopwatch · no GPS</Label>
+              <div className={`num${swRun ? " gtext" : ""}`} style={{ fontSize: 54, fontWeight: 700, margin: "8px 0 14px", color: swRun ? undefined : C.text }}>{fmt(swMs)}</div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button onClick={() => { setSwRun((r) => !r); haptic(10); }} className="chip"
-                  style={{ background: swRun ? C.warn : C.accent, color: C.bg, border: "none", padding: "11px 26px", fontSize: 14 }}>
+                <button onClick={() => { setSwRun((r) => !r); haptic(10); }} className={swRun ? "chip tap" : "chip tap on"}
+                  style={swRun ? { background: C.warn, color: C.bg, border: "none", padding: "11px 26px", fontSize: 14, fontWeight: 800 } : { padding: "11px 26px", fontSize: 14 }}>
                   {swRun ? "Pause" : swMs ? "Resume" : "Start"}
                 </button>
                 <button onClick={() => { setSwRun(false); setSwMs(0); haptic(8); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>Reset</button>
@@ -849,7 +1109,7 @@ export default function App() {
         {tab === "coach" && (
           <div className="rise">
             <div style={{ display: "flex", alignItems: "baseline", marginBottom: 14 }}>
-              <h2 className="disp" style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>AI coach</h2>
+              <h2 className="disp" style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>AI coach</h2>
               <span style={{ marginLeft: "auto", fontSize: 10, color: C.dim, fontWeight: 600 }}>powered by Groq</span>
             </div>
 
@@ -873,7 +1133,7 @@ export default function App() {
 
             {/* Chat */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 10 }}>ASK YOUR COACH</div>
+              <Label>Ask your coach</Label>
 
               <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>MY GOAL</label>
               <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
@@ -884,10 +1144,10 @@ export default function App() {
                   {coachChat.map((m, i) => (
                     <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
                       <div style={{
-                        background: m.role === "user" ? C.accent : C.surface2,
+                        background: m.role === "user" ? C.grad : C.surface2,
                         color: m.role === "user" ? C.bg : C.text,
                         border: m.role === "user" ? "none" : `1px solid ${C.line}`,
-                        borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.55,
+                        borderRadius: 14, padding: "10px 13px", fontSize: 13, lineHeight: 1.55,
                         whiteSpace: "pre-wrap", fontWeight: m.role === "user" ? 600 : 400,
                       }}>{m.display || m.content}</div>
                     </div>
@@ -927,7 +1187,7 @@ export default function App() {
 
             {/* Plan tools */}
             <Card style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 4 }}>YOUR TRAINING PLAN</div>
+              <Label>Your training plan</Label>
               <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
                 Build a fresh block when you've smashed your goal, or re-tune your upcoming sessions from the too easy / too hard feedback you leave on completed days. Nothing logged is lost.
               </div>
@@ -1008,8 +1268,7 @@ export default function App() {
             {history.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
                 {[["all", "All"], ["run", "Runs"], ["gps", "GPS"]].map(([id, lbl]) => (
-                  <button key={id} onClick={() => { setHistFilter(id); haptic(5); }} className="chip"
-                    style={histFilter === id ? { background: C.accent, color: C.bg, border: "none" } : {}}>
+                  <button key={id} onClick={() => { setHistFilter(id); haptic(5); }} className={`chip tap${histFilter === id ? " on" : ""}`}>
                     {lbl}
                   </button>
                 ))}
@@ -1049,7 +1308,7 @@ export default function App() {
                           {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>"{h.e.note}"</div>}
                         </div>
                         <div style={{ textAlign: "right" }}>
-                          {parseFloat(h.e.km) > 0 && <div className="num" style={{ fontSize: 18, fontWeight: 700, color: C.accent }}>{parseFloat(h.e.km)} km</div>}
+                          {parseFloat(h.e.km) > 0 && <div className="num gtext" style={{ fontSize: 19, fontWeight: 700 }}>{parseFloat(h.e.km)} km</div>}
                           <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH</div>}
                           {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
@@ -1124,10 +1383,16 @@ export default function App() {
             )}
             {/* Today / next-up hero with inline actions */}
             {hero ? (
-              <div className="card" style={{ borderRadius: 18, padding: "16px 18px", marginBottom: 18, borderLeft: `3px solid ${typeColor(hero.type)}` }}>
-                <div style={{ display: "flex", alignItems: "center" }}>
-                  <span style={{ fontSize: 10, letterSpacing: 2, color: typeColor(hero.type), fontWeight: 800 }}>
-                    {heroIdx >= 0 ? "TODAY" : "NEXT UP"} · WEEK {hero.week} · {hero.d}
+              <div className="card accented" style={{ borderRadius: 22, padding: "18px 20px 20px", marginBottom: 18, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{
+                    fontSize: 9.5, letterSpacing: 1.6, fontWeight: 800, color: C.bg,
+                    background: C.grad, borderRadius: 999, padding: "4px 10px",
+                  }}>
+                    {heroIdx >= 0 ? "TODAY" : "NEXT UP"}
+                  </span>
+                  <span style={{ fontSize: 10, letterSpacing: 1.6, color: typeColor(hero.type), fontWeight: 800 }}>
+                    WEEK {hero.week} · {hero.d} · {hero.type.toUpperCase()}
                   </span>
                   {heroIdx >= 0 && (
                     <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
@@ -1135,22 +1400,28 @@ export default function App() {
                     </span>
                   )}
                 </div>
-                <div className="disp" style={{ fontSize: 27, fontWeight: 700, margin: "6px 0 2px", textDecoration: heroEntry.done ? "line-through" : "none", color: heroEntry.done ? C.dim : C.text }}>
+                <div className="disp" style={{ fontSize: 30, fontWeight: 700, margin: "10px 0 3px", lineHeight: 1.1, textDecoration: heroEntry.done ? "line-through" : "none", color: heroEntry.done ? C.dim : C.text }}>
                   {hero.title}
                 </div>
-                <div style={{ fontSize: 13, color: C.dim }}>{hero.detail}</div>
-                <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>{hero.detail}</div>
+                {hero.km > 0 && (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 12 }}>
+                    <span className="num gtext" style={{ fontSize: 26, fontWeight: 700 }}>{hero.km}</span>
+                    <span className="lab">km on the plan</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 15 }}>
                   <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-                    style={{ flex: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 12, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                    style={{ flex: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>
                     <Icon name="play" size={15} /> Start GPS run
                   </button>
                   <button onClick={() => update(hero.key, { done: !heroEntry.done })} className="chip tap"
-                    style={{ flex: 1, padding: "12px 0", fontSize: 13, background: heroEntry.done ? C.surface2 : C.bg, color: heroEntry.done ? C.text : C.dim }}>
+                    style={{ flex: 1, padding: "13px 0", fontSize: 13, fontWeight: 700, background: heroEntry.done ? tint(C.accent, .16) : C.bgSoft, color: heroEntry.done ? C.accent : C.dim, borderColor: heroEntry.done ? tint(C.accent, .4) : C.line }}>
                     {heroEntry.done ? "Done ✓" : "Mark done"}
                   </button>
                 </div>
                 {heroEntry.done && nextUp && nextUp.key !== hero.key && (
-                  <div style={{ fontSize: 11, color: C.dim, marginTop: 10 }}>
+                  <div style={{ fontSize: 11, color: C.dim, marginTop: 12 }}>
                     Next up: Week {nextUp.week} · {nextUp.d} · {nextUp.title}
                   </div>
                 )}
@@ -1169,6 +1440,22 @@ export default function App() {
                     <Icon name="play" size={15} /> Victory run
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Goal countdown strip — the target that comes after this block */}
+            {goalDate && goalDays != null && goalDays >= 0 && goal && (
+              <div className="card tap" onClick={() => { setTab("stats"); haptic(6); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 16, padding: "13px 15px", marginBottom: 16 }}>
+                <span style={{ color: C.accent, display: "flex" }}><Icon name="flag" size={18} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="lab" style={{ marginBottom: 2 }}>{goal.name}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                    {goalDays === 0 ? "Race day is today" : `${goalDays} day${goalDays === 1 ? "" : "s"} to race day`}
+                    {goalPrediction ? ` · on track for ${fmtDuration(goalPrediction.sec)}` : ""}
+                  </div>
+                </div>
+                <span className="num" style={{ fontSize: 13, fontWeight: 800, color: goalReady >= 100 ? C.good : C.dim }}>{goalReady}%</span>
               </div>
             )}
 
@@ -1194,15 +1481,13 @@ export default function App() {
                   <div className={weekDone ? "tap" : ""}
                     onClick={() => { if (weekDone) { setOpenWeeks((o) => ({ ...o, [w.n]: !o[w.n] })); haptic(5); } }}
                     style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                    <span className="disp" style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>WEEK {w.n}</span>
+                    <span className="disp" style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: weekDone ? C.accent : C.text }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>
                     <span style={{ marginLeft: "auto", fontSize: 11, color: weekDone ? C.accent : C.dim, fontWeight: 700 }}>
                       {weekDone ? `✓ done ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
                     </span>
                   </div>
-                  <div style={{ height: 3, borderRadius: 3, background: C.surface2, marginBottom: 9, overflow: "hidden" }}>
-                    <div style={{ height: "100%", borderRadius: 3, background: C.accent, width: `${(wDone / w.days.length) * 100}%`, transition: "width .3s ease" }} />
-                  </div>
+                  <div style={{ marginBottom: 10 }}><Bar pct={(wDone / w.days.length) * 100} /></div>
                   {!collapsed && <div style={{ display: "grid", gap: 7 }}>
                     {w.days.map((day, di) => {
                       const key = `w${w.n}d${di}`;
@@ -1212,8 +1497,13 @@ export default function App() {
                       const isToday = flatIdx === todayIdx;
                       return (
                         <div key={di}>
-                          <div className="row tap" onClick={() => { setOpen(isOpen ? null : key); haptic(5); }}
-                            style={{ display: "flex", alignItems: "center", gap: 12, background: C.surface, border: `1px solid ${isToday ? C.accent : e.done ? typeColor(day.type) : C.line}`, borderRadius: isOpen ? "12px 12px 0 0" : 12, padding: "11px 13px" }}>
+                          <div className="row tap card" onClick={() => { setOpen(isOpen ? null : key); haptic(5); }}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 12, padding: "12px 13px",
+                              borderColor: isToday ? tint(C.accent, .55) : e.done ? tint(typeColor(day.type), .45) : C.line,
+                              borderRadius: isOpen ? "14px 14px 0 0" : 14,
+                              boxShadow: isToday ? C.glow : undefined,
+                            }}>
                             <button onClick={(ev) => { ev.stopPropagation(); update(key, { done: !e.done }); }}
                               className={e.done ? "pop" : ""}
                               style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `2px solid ${e.done ? typeColor(day.type) : C.line}`, background: e.done ? typeColor(day.type) : "transparent", color: C.bg, fontWeight: 900, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1224,12 +1514,12 @@ export default function App() {
                               <div className="disp" style={{ fontSize: 16, fontWeight: 700, textDecoration: e.done ? "line-through" : "none", color: e.done ? C.dim : C.text }}>{day.title}</div>
                               <div style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{day.detail}</div>
                             </div>
-                            {isToday && <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.accent, padding: "3px 6px", borderRadius: 6 }}>TODAY</span>}
+                            {isToday && <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "3px 7px", borderRadius: 999 }}>TODAY</span>}
                             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: typeColor(day.type) }}>{day.type.toUpperCase()}</span>
                           </div>
 
                           {isOpen && (
-                            <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.line}`, borderTop: "none", borderRadius: "0 0 12px 12px", padding: 14 }}>
+                            <div className="rise" style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderTop: "none", borderRadius: "0 0 14px 14px", padding: 14 }}>
                               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                                 <div style={{ flex: 1 }}>
                                   <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE (km)</label>
@@ -1352,8 +1642,12 @@ export default function App() {
 
 function PB({ label, value, unit, color }) {
   return (
-    <div style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 14, padding: "13px 8px", borderTop: color ? `2px solid ${color}` : `1px solid ${C.line}` }}>
-      <div className="num" style={{ fontSize: 16, fontWeight: 700, color: color || C.text }}>{value}<span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
+    <div style={{
+      flex: 1, textAlign: "center", borderRadius: 14, padding: "13px 8px",
+      background: color ? `linear-gradient(160deg,${tint(color, .14)},${C.surface2} 70%)` : C.surface2,
+      border: `1px solid ${color ? tint(color, .32) : C.line}`,
+    }}>
+      <div className="num" style={{ fontSize: 16.5, fontWeight: 700, color: color || C.text }}>{value}<span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
       <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 5, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
     </div>
   );

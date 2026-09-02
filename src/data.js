@@ -42,12 +42,66 @@ export let WEEKS = DEFAULT_WEEKS;
 export let FLAT = flatten(WEEKS);
 export let TOTAL = FLAT.length;
 export function applyPlan(weeks) { WEEKS = Array.isArray(weeks) && weeks.length ? weeks : DEFAULT_WEEKS; FLAT = flatten(WEEKS); TOTAL = FLAT.length; return WEEKS; }
-export const C = { bg:"#0a0b0d", surface:"#131519", surface2:"#1b1e24", line:"#252a32", text:"#f4f5f2", dim:"#8e94a0", accent:"#c8f73c", run:"#c8f73c", easy:"#45dcc2", rest:"#5c6373", warn:"#ff6a3d" };
-export const typeColor = (t) => t === "run" ? C.run : t === "easy" ? C.easy : C.rest;
+// ---------------------------------------------------------------------------
+// Design tokens. Everything reads `C` at render time, so mutating it in place
+// (applyAccent) plus a re-render is enough to re-theme the whole app.
+// ---------------------------------------------------------------------------
+export const C = {
+  bg: "#07080b",          // page ground
+  bgSoft: "#0b0d11",      // inputs / recessed wells
+  surface: "#121419",     // primary card
+  surface2: "#181b22",    // nested card / chip
+  surface3: "#20242d",    // hover / raised chip
+  line: "#242833",        // hairline border
+  line2: "#333949",       // stronger border
+  text: "#f5f6f4",
+  dim: "#8d93a1",
+  dim2: "#636876",
+  accent: "#c8f73c",      // primary accent (swapped by applyAccent)
+  accent2: "#4be8a0",     // gradient partner for the accent
+  run: "#c8f73c",
+  easy: "#45dcc2",
+  rest: "#5c6373",
+  warn: "#ff6a3d",
+  good: "#3ddc97",
+  // derived, kept in sync by applyAccent()
+  grad: "linear-gradient(135deg,#c8f73c 0%,#4be8a0 100%)",
+  gradSoft: "linear-gradient(135deg,#c8f73c22 0%,#4be8a018 100%)",
+  glow: "0 10px 34px -14px #c8f73c99",
+};
+export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
+
+// Accents ship in pairs so every gradient in the app stays on-brand.
 export const ACCENTS = [
-  { id:"lime", name:"Lime", accent:"#c8f73c" },
-  { id:"sky", name:"Sky", accent:"#5cc8ff" },
-  { id:"gold", name:"Gold", accent:"#ffd84d" },
-  { id:"violet", name:"Violet", accent:"#c08bff" },
+  { id: "lime",   name: "Lime",   accent: "#c8f73c", accent2: "#4be8a0" },
+  { id: "sky",    name: "Sky",    accent: "#5cc8ff", accent2: "#8b7bff" },
+  { id: "gold",   name: "Gold",   accent: "#ffd84d", accent2: "#ff8a3d" },
+  { id: "violet", name: "Violet", accent: "#c08bff", accent2: "#ff7ad9" },
+  { id: "ember",  name: "Ember",  accent: "#ff7a45", accent2: "#ffc24d" },
+  { id: "mint",   name: "Mint",   accent: "#3ddc97", accent2: "#29c5f6" },
 ];
-export function applyAccent(id) { const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0]; C.accent=a.accent; C.run=a.accent; if (typeof document !== "undefined") document.documentElement.style.setProperty("--app-accent", a.accent); return a.id; }
+
+export function applyAccent(id) {
+  const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
+  C.accent = a.accent;
+  C.accent2 = a.accent2;
+  C.run = a.accent;
+  C.grad = `linear-gradient(135deg,${a.accent} 0%,${a.accent2} 100%)`;
+  C.gradSoft = `linear-gradient(135deg,${a.accent}22 0%,${a.accent2}18 100%)`;
+  C.glow = `0 10px 34px -14px ${a.accent}99`;
+  if (typeof document !== "undefined") {
+    const r = document.documentElement.style;
+    r.setProperty("--app-accent", a.accent);
+    r.setProperty("--app-accent-2", a.accent2);
+    r.setProperty("--app-grad", C.grad);
+    r.setProperty("--app-glow", C.glow);
+  }
+  return a.id;
+}
+
+// Translucent tint of any token colour, e.g. tint(C.accent, 0.14).
+export const tint = (hex, alpha) => {
+  const h = String(hex).replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+};
