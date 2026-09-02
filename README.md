@@ -1,19 +1,33 @@
-# Road to 5K 🏃
+# Stride 🏃
 
-A 4-week training app to build up to a continuous 5 km run. Tick off each day,
-log your distance/time, watch your charts grow, and get a daily reminder to run.
-It installs to your phone like a normal app and works offline.
+A run tracker built around a rolling training block. It started life as a
+four-week "road to 5K" plan; now the 5K is done, the plan keeps extending and
+the app aims at whatever race is next. Tick off each day, track runs by GPS,
+watch your charts grow, and get nudged when it's time to head out. It installs
+to your phone like a normal app and works offline.
 
 ![icon](public/icons/icon-192.png)
 
 ## Features
 
-- **4-week plan** with run / easy / rest days and side-stitch tips.
-- **Stats**: km logged, best streak, runs done, stitch count, and a live stopwatch.
-- **Charts**: km per week (logged vs plan) and your cumulative distance curve.
-- **History**: every completed session with distance, time, pace, and notes.
-- **Daily reminders**: a notification nudging you to do today's session.
-- **Installable PWA**: add to your home screen, works offline, your data stays on your phone.
+- **Rolling training plan** with run / easy / rest days, extendable by the AI coach.
+- **Race goals**: pick a target from 5K to marathon, set a race date, and get a
+  predicted finish time and a distance-readiness read-out.
+- **Race predictions**: Riegel-equivalent times at 1K, 5K, 10K, half and full,
+  derived from your best logged effort.
+- **Live GPS tracking** with route map, splits, cadence, elevation, calories,
+  run/walk intervals, auto-pause and audio cues.
+- **Route maker**: loops, out-and-backs and hand-drawn routes on the real road
+  network, from OpenStreetMap data.
+- **Notifications while you run**: a live notice with distance, time and pace,
+  plus kilometre splits, run/walk switches and a finish summary — all switchable.
+- **Stats & charts**: km per week logged vs plan, pace trend, cumulative
+  distance, a day-by-day calendar, personal records and achievements.
+- **History**: every session with distance, time, pace, route thumbnail, splits
+  and a replay.
+- **AI coach** (optional, your own free Groq key) for analysis and new plan blocks.
+- **Six accent themes**, and an installable PWA: add to your home screen, works
+  offline, your data stays on your phone.
 
 ---
 
@@ -95,7 +109,7 @@ npm run android:apk         # builds android/app/build/outputs/apk/debug/app-deb
 ```
 
 Copy that `app-debug.apk` to your phone and open it (you'll need to allow
-"install unknown apps" for your file manager). The app icon is **Road to 5K**.
+"install unknown apps" for your file manager). The app icon is **Stride**.
 
 > Notes: this is a *sideloaded* debug build — perfect for your own phone.
 > Publishing to the Google Play Store additionally needs a one-time \$25 Google

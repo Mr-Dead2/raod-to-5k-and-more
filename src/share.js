@@ -144,13 +144,13 @@ export async function generateRunCard(run) {
 
   // Header branding pill
   ctx.fillStyle = C.surface2;
-  rr(ctx, PAD, PAD, 130, 30, 15);
+  rr(ctx, PAD, PAD, 108, 30, 15);
   ctx.fill();
 
   ctx.font = "800 11px 'Space Grotesk', system-ui";
   ctx.fillStyle = C.accent;
   ctx.textBaseline = "middle";
-  ctx.fillText("🏃 ROAD TO 5K", PAD + 14, PAD + 15);
+  ctx.fillText("🏃 STRIDE", PAD + 14, PAD + 15);
 
   if (run.date) {
     const d = new Date(run.date);
@@ -213,7 +213,7 @@ export async function generateRunCard(run) {
   // Footer quote / tag
   ctx.font = "600 11px 'Manrope', system-ui";
   ctx.fillStyle = C.dim;
-  ctx.fillText("Building speed & endurance daily • Tracked with Road to 5K", PAD, curY + 10);
+  ctx.fillText("Building speed & endurance daily • Tracked with Stride", PAD, curY + 10);
 
   return canvas;
 }

@@ -29,7 +29,7 @@ function startNativeWatch(onFix, onError) {
     {
       // Providing backgroundMessage is what enables the foreground service,
       // i.e. tracking with the screen off / app in the background.
-      backgroundTitle: "Road to 5K — run in progress",
+      backgroundTitle: "Stride — run in progress",
       backgroundMessage: "Recording your distance and route. Tap to return.",
       requestPermissions: true,
       stale: false,
