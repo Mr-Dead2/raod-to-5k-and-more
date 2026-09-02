@@ -6,7 +6,7 @@
 // Settings live in IndexedDB, not localStorage, because the service worker has
 // to read them while the app is closed.
 import { idbGet, idbSet } from "./idb.js";
-import { isNative, nativeLiveRun, nativeEndLiveRun, nativeRunNotification } from "./native.js";
+import { isNative, nativeLiveRun, nativeEndLiveRun, nativeRunNotification, nativeEnsurePermission } from "./native.js";
 
 const KEY = "reminder";
 
@@ -50,6 +50,32 @@ export async function requestPermission() {
   try { return await Notification.requestPermission(); } catch { return "denied"; }
 }
 
+// Nothing shows a notification until the user has granted permission, and the
+// browser only asks when we ask. Call this before anything that intends to
+// notify (starting a run, switching an alert on) rather than assuming an
+// earlier prompt happened.
+export async function ensureNotificationPermission() {
+  if (isNative()) return nativeEnsurePermission();
+  if (!notificationsSupported()) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;   // only the user can undo this
+  return (await requestPermission()) === "granted";
+}
+
+// navigator.serviceWorker.ready never rejects — if no worker ever takes
+// control (private windows, a failed registration, plain http) it simply
+// hangs, which would stall every notification call behind it. Time it out and
+// fall back to a page-level notification.
+async function swReady(ms = 2500) {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
+  } catch { return null; }
+}
+
 async function registerPeriodicSync() {
   try {
     const reg = await navigator.serviceWorker.ready;
@@ -73,20 +99,23 @@ export async function showNotice(title, body, opts = {}) {
     data: { url: "./" },
     ...opts,
   };
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    await reg.showNotification(title, options);
-    return true;
-  } catch {
-    try { new Notification(title, options); return true; } catch { return false; }
+  const reg = await swReady();
+  if (reg) {
+    try { await reg.showNotification(title, options); return true; } catch { /* fall through */ }
   }
+  // Page-level fallback. The Notification constructor rejects the fields only a
+  // service worker may use, so drop them rather than lose the notice entirely.
+  try {
+    const { actions, renotify, ...plain } = options;
+    new Notification(title, plain);
+    return true;
+  } catch { return false; }
 }
 
 export const showReminderNow = (body, title = "Stride", tag = "stride-reminder") => showNotice(title, body, { tag });
 
 export async function enableReminders(time, message) {
-  const perm = permission() === "granted" ? "granted" : await requestPermission();
-  if (perm !== "granted") return false;
+  if (!(await ensureNotificationPermission())) return false;
   await saveReminder({ enabled: true, time, message });
   await registerPeriodicSync();
   return true;
@@ -161,8 +190,8 @@ export async function endLiveRun() {
   liveAt = 0;
   if (isNative()) { await nativeEndLiveRun(); return; }
   try {
-    const reg = await navigator.serviceWorker.ready;
-    for (const n of await reg.getNotifications({ tag: LIVE_TAG })) n.close();
+    const reg = await swReady();
+    if (reg) for (const n of await reg.getNotifications({ tag: LIVE_TAG })) n.close();
   } catch { /* nothing to clear */ }
 }
 
@@ -195,10 +224,18 @@ export async function notifyMilestone(title, body) {
 
 // "Send me one now" button in settings, so the user can prove it works.
 export async function sendTestNotification() {
-  const perm = permission() === "granted" ? "granted" : await requestPermission();
+  if (!(await ensureNotificationPermission())) return false;
   if (isNative()) return nativeRunNotification("Stride · test", "Notifications are working. This is what a nudge looks like.");
-  if (perm !== "granted") return false;
   return showNotice("Stride · test", "Notifications are working. This is what a nudge looks like.", { tag: "stride-test" });
+}
+
+// Called when a run starts: the alerts the user has switched on are useless if
+// the browser was never asked. Resolves to whether notifications can be shown.
+export async function primeRunNotifications() {
+  const r = await loadReminder();
+  const wanted = r.runLive !== false || r.runKm !== false || r.runInterval !== false || r.runFinish !== false;
+  if (!wanted) return false;
+  return ensureNotificationPermission();
 }
 
 export function speak(text) {

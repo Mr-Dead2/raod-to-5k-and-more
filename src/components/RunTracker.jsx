@@ -9,7 +9,7 @@ import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
 import { useStepCounter, cadenceSupported, ensureMotionPermission } from "../cadence.js";
 import { shareRunCard } from "../share.js";
-import { notifyRunInterval } from "../notifications.js";
+import { notifyRunInterval, primeRunNotifications } from "../notifications.js";
 
 // kcal per kg of body weight per km — standard flat-ground estimates
 const KCAL_RUN = 1.036, KCAL_WALK = 0.53;
@@ -250,6 +250,9 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
     haptic(15); primeAudio();
     hrAgg.current = { sum: 0, n: 0, max: 0 };
     await ensureLocationPermission();
+    // Ask for notification permission here rather than never: the in-run
+    // alerts are switched on by default, and a browser only prompts when asked.
+    await primeRunNotifications();
     if (cadenceOn) await ensureMotionPermission();
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);

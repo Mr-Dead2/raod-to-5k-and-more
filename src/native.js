@@ -31,6 +31,18 @@ async function granted(LocalNotifications) {
   return perm.display === "granted";
 }
 
+// Ask Android for POST_NOTIFICATIONS (required from Android 13) and make sure
+// the channels exist. Safe to call repeatedly.
+export async function nativeEnsurePermission() {
+  if (!isNative()) return false;
+  try {
+    const LocalNotifications = await notif();
+    const ok = await granted(LocalNotifications);
+    if (ok) await ensureChannels(LocalNotifications);
+    return ok;
+  } catch { return false; }
+}
+
 export async function nativeEnableReminder(time, message) {
   if (!isNative()) return false;
   const LocalNotifications = await notif();
@@ -68,12 +80,15 @@ export async function nativeRunNotification(title, body) {
     const LocalNotifications = await notif();
     if (!(await granted(LocalNotifications))) return false;
     await ensureChannels(LocalNotifications);
+    // No `schedule`: the plugin then posts the notification straight away.
+    // Scheduling even 150 ms out hands it to AlarmManager, which Android 12+
+    // downgrades to an inexact alarm unless the app holds SCHEDULE_EXACT_ALARM
+    // — so a km split could land minutes after the kilometre.
     await LocalNotifications.schedule({
       notifications: [{
         id: RUN_ID_BASE + (Math.floor(Date.now() / 1000) % 100000),
         title, body,
         channelId: ALERT_CHANNEL,
-        schedule: { at: new Date(Date.now() + 150) },
       }],
     });
     return true;
@@ -88,6 +103,8 @@ export async function nativeLiveRun(title, body) {
     const LocalNotifications = await notif();
     if (!(await granted(LocalNotifications))) return false;
     await ensureChannels(LocalNotifications);
+    // Posted immediately (no `schedule`) — see nativeRunNotification. Same id
+    // every time, so Android rewrites the existing notice in place.
     await LocalNotifications.schedule({
       notifications: [{
         id: LIVE_ID,
@@ -95,7 +112,6 @@ export async function nativeLiveRun(title, body) {
         channelId: LIVE_CHANNEL,
         ongoing: true,
         autoCancel: false,
-        schedule: { at: new Date(Date.now() + 100) },
       }],
     });
     return true;

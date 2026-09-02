@@ -17,6 +17,7 @@ import {
   notificationsSupported, permission, loadReminder, saveReminder,
   enableReminders, disableReminders, showReminderNow, syncMessage,
   startForegroundScheduler, sendTestNotification, notifyMilestone,
+  ensureNotificationPermission,
 } from "./notifications.js";
 import {
   RACES, raceById, bestReference, predictAll, readiness, daysUntil,
@@ -229,6 +230,21 @@ export default function App() {
     setNotif(next);
     haptic(6);
     await saveReminder({ [key]: next[key] });
+    // Switching an alert on is worthless if the browser was never asked.
+    if (next[key] && key !== "skipRest") {
+      await ensureNotificationPermission();
+      if (notificationsSupported()) setPerm(permission());
+    }
+  };
+
+  // Explicit "allow notifications" action for the settings banner.
+  const askNotificationPermission = async () => {
+    haptic(8);
+    const ok = await ensureNotificationPermission();
+    if (notificationsSupported()) setPerm(permission());
+    setToast(ok
+      ? { icon: "🔔", title: "Notifications are on", label: "NOTIFICATIONS" }
+      : { icon: "⚠️", title: "Blocked — allow them in your browser settings", label: "NOTIFICATIONS" });
   };
   const testNotification = async () => {
     const ok = await sendTestNotification();
@@ -1036,6 +1052,31 @@ export default function App() {
 
               <div style={{ height: 1, background: C.line, margin: "14px -18px" }} />
 
+              {/* Until permission is granted every switch below is inert, so say
+                  so loudly rather than showing a row of confident green toggles. */}
+              {!isNative() && notificationsSupported() && perm !== "granted" && (
+                <div style={{
+                  borderRadius: 14, padding: "13px 14px", marginBottom: 14,
+                  background: `linear-gradient(150deg,${tint(C.warn, .16)},${C.surface2} 70%)`,
+                  border: `1px solid ${tint(C.warn, .45)}`,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                    {perm === "denied" ? "Notifications are blocked" : "Notifications aren't switched on yet"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, lineHeight: 1.5 }}>
+                    {perm === "denied"
+                      ? "Your browser is blocking them for this site. Open the padlock or site settings next to the address bar and allow notifications, then come back."
+                      : "The switches below do nothing until your browser gives Stride permission."}
+                  </div>
+                  {perm !== "denied" && (
+                    <button onClick={askNotificationPermission} className="tap cta"
+                      style={{ marginTop: 11, width: "100%", borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
+                      Allow notifications
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="lab" style={{ marginBottom: 4 }}>What Stride tells you</div>
               <div style={{ fontSize: 11, color: C.dim2, marginBottom: 10, lineHeight: 1.5 }}>
                 Alerts land on your lock screen, so they reach you with the phone pocketed mid-run.
@@ -1047,17 +1088,22 @@ export default function App() {
                 ["runFinish", "Run finished", "A summary the moment you stop the clock"],
                 ["milestone", "Achievements", "When you unlock a badge"],
                 ["skipRest", "Stay quiet on rest days", "Skip the daily nudge when the plan says rest"],
-              ].map(([key, title, desc]) => (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{title}</div>
-                    <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
+              ].map(([key, title, desc]) => {
+                // A switch that is on but can't fire is shown muted, not accent.
+                const live = notif[key] && (key === "skipRest" || isNative() || perm === "granted");
+                return (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{title}</div>
+                      <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
+                    </div>
+                    <button onClick={() => toggleNotif(key)} className="sw"
+                      style={{ background: live ? C.accent : notif[key] ? C.line2 : C.line, flexShrink: 0 }} aria-label={`Toggle ${title}`}>
+                      <b style={{ left: notif[key] ? 22 : 3 }} />
+                    </button>
                   </div>
-                  <button onClick={() => toggleNotif(key)} className="sw" style={{ background: notif[key] ? C.accent : C.line, flexShrink: 0 }} aria-label={`Toggle ${title}`}>
-                    <b style={{ left: notif[key] ? 22 : 3 }} />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
 
               <button onClick={testNotification} className="chip tap" style={{ marginTop: 12, width: "100%", padding: "11px 0", fontWeight: 700, color: C.text }}>
                 Send me a test notification
