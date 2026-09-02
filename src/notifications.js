@@ -54,12 +54,24 @@ export async function requestPermission() {
 // browser only asks when we ask. Call this before anything that intends to
 // notify (starting a run, switching an alert on) rather than assuming an
 // earlier prompt happened.
-export async function ensureNotificationPermission() {
-  if (isNative()) return nativeEnsurePermission();
-  if (!notificationsSupported()) return false;
-  if (Notification.permission === "granted") return true;
-  if (Notification.permission === "denied") return false;   // only the user can undo this
-  return (await requestPermission()) === "granted";
+//
+// A permission prompt the user simply ignores leaves its promise pending for as
+// long as the tab lives, so this always settles: whatever is waiting reports
+// the permission as it currently stands and moves on. Never let a caller block
+// on this indefinitely — and never gate a core action (like starting a run) on
+// the answer at all.
+export async function ensureNotificationPermission({ timeoutMs = 15000 } = {}) {
+  const ask = async () => {
+    if (isNative()) return nativeEnsurePermission();
+    if (!notificationsSupported()) return false;
+    if (Notification.permission === "granted") return true;
+    if (Notification.permission === "denied") return false;   // only the user can undo this
+    return (await requestPermission()) === "granted";
+  };
+  return Promise.race([
+    ask().catch(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(permission() === "granted"), timeoutMs)),
+  ]);
 }
 
 // navigator.serviceWorker.ready never rejects — if no worker ever takes
@@ -230,7 +242,9 @@ export async function sendTestNotification() {
 }
 
 // Called when a run starts: the alerts the user has switched on are useless if
-// the browser was never asked. Resolves to whether notifications can be shown.
+// the browser was never asked. Callers must NOT await this — see
+// ensureNotificationPermission — the run has to begin whatever the user does
+// with the prompt.
 export async function primeRunNotifications() {
   const r = await loadReminder();
   const wanted = r.runLive !== false || r.runKm !== false || r.runInterval !== false || r.runFinish !== false;

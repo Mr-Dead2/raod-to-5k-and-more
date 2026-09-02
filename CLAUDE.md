@@ -153,7 +153,13 @@ front — the other headline reason to go native.
   switches default to on, so `ensureNotificationPermission()` is called when a
   run starts (`primeRunNotifications()` from RunTracker), when an alert switch
   is turned on, from the settings "Allow notifications" banner and from the test
-  button — never assume an earlier prompt happened. The settings switches render
+  button — never assume an earlier prompt happened. **Never `await` a permission
+  prompt on the path to a core action.** A prompt the user ignores leaves
+  `Notification.requestPermission()` pending for the life of the tab, so
+  awaiting it before `t.start()` meant the run simply never began;
+  `primeRunNotifications()` is deliberately fire-and-forget, and
+  `ensureNotificationPermission()` additionally races a timeout so nothing can
+  wedge on it. The settings switches render
   muted rather than accent while permission is missing, because an accent switch
   that cannot fire is a lie. `showNotice` races `navigator.serviceWorker.ready`
   against a timeout (that promise never rejects, so an uncontrolled page would

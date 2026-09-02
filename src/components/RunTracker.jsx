@@ -250,9 +250,11 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
     haptic(15); primeAudio();
     hrAgg.current = { sum: 0, n: 0, max: 0 };
     await ensureLocationPermission();
-    // Ask for notification permission here rather than never: the in-run
-    // alerts are switched on by default, and a browser only prompts when asked.
-    await primeRunNotifications();
+    // Ask for notification permission here rather than never: the in-run alerts
+    // are switched on by default, and a browser only prompts when asked. NOT
+    // awaited — a prompt the runner ignores would otherwise hang the countdown
+    // and the run would never start.
+    primeRunNotifications().catch(() => {});
     if (cadenceOn) await ensureMotionPermission();
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);
