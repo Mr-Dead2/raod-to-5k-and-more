@@ -5,6 +5,9 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 const base = process.env.BASE_PATH || "/";
 export default defineConfig({
   base,
+  // Stamped into the bundle so the app can show which build is actually
+  // running — the first thing to check when a fix "did not work".
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   plugins: [react(), VitePWA({
     strategies:"injectManifest", srcDir:"src", filename:"sw.js", registerType:"autoUpdate",
     includeAssets:["icons/icon-192.png","icons/icon-512.png","icons/maskable-512.png"],
