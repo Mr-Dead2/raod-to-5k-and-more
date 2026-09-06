@@ -1,5 +1,11 @@
 ext {
-    minSdkVersion = 22
+    // 26 (Android 8.0), not Capacitor's default 22: androidx.health.connect's
+    // client library is API 26+, and the app has always relied on notification
+    // channels, which are an API 26 feature too.
+    minSdkVersion = 26
+    kotlin_version = '1.9.10'
+    healthConnectVersion = '1.0.0'
+    coroutinesVersion = '1.7.3'
     compileSdkVersion = 34
     targetSdkVersion = 34
     androidxActivityVersion = '1.8.0'
