@@ -44,6 +44,9 @@ export function readableError(e) {
   if (/permission/i.test(msg)) return "Bluetooth permission was denied. Allow nearby-device access for Stride in Android settings, then try again.";
   if (/BLE is not supported|not supported/i.test(msg)) return "This device has no Bluetooth LE support.";
   if (/disabled|not enabled/i.test(msg)) return "Bluetooth is switched off — turn it on and try again.";
+  if (/no device found/i.test(msg)) {
+    return "Nothing nearby is broadcasting heart rate. A watch has to be running an HR-broadcast app to appear here — being paired to the phone is not enough.";
+  }
   if (/timeout|timed out/i.test(msg)) return "No heart-rate device answered. Check it is switched on, broadcasting, and close by.";
   if (/not connected|disconnected/i.test(msg)) return "The connection dropped before it settled. Try again.";
   return msg ? `Couldn't connect: ${msg}` : "Couldn't connect to a heart-rate device.";
@@ -144,17 +147,25 @@ export function useHeartRate() {
 
     // A powered-down radio is the commonest cause of "it just doesn't work",
     // and on Android the system can ask the user to switch it on for us.
+    //
+    // BleClient.isEnabled() resolves to a plain boolean. It is the *plugin*
+    // underneath (BluetoothLe.isEnabled) that answers {value}; the BleClient
+    // wrapper already unwraps it. Destructuring {value} here read undefined,
+    // which is falsy — so this branch fired no matter what the radio was doing,
+    // told the user Bluetooth was off while it was plainly on, and put a system
+    // "turn on Bluetooth" dialog in front of them. The connect path was
+    // unreachable on the phone as a result.
     try {
-      const { value: on } = await BleClient.isEnabled();
+      let on = await BleClient.isEnabled();
       if (!on) {
         if (isNative()) { try { await BleClient.requestEnable(); } catch { /* declined */ } }
-        const { value: onNow } = await BleClient.isEnabled();
-        if (!onNow) {
-          keepAlive.current = false;
-          setStatus("idle");
-          setError("Bluetooth is switched off — turn it on and try again.");
-          return false;
-        }
+        on = await BleClient.isEnabled();
+      }
+      if (!on) {
+        keepAlive.current = false;
+        setStatus("idle");
+        setError("Bluetooth is switched off — turn it on and try again.");
+        return false;
       }
     } catch { /* isEnabled is not available everywhere — carry on and let connect fail */ }
 
