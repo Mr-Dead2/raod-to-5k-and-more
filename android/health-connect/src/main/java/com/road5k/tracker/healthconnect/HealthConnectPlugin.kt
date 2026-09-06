@@ -72,8 +72,14 @@ class HealthConnectPlugin : Plugin() {
         call.resolve(JSObject().put("availability", value))
     }
 
+    // Named checkHealthPermissions, not checkPermissions: Capacitor's Plugin base
+    // class already declares checkPermissions/requestPermissions as @PluginMethods
+    // for the normal Android runtime-permission system. Health Connect grants are
+    // a different mechanism entirely (its own system screen, not a runtime
+    // dialog), so these get their own names rather than overriding machinery
+    // they have nothing to do with.
     @PluginMethod
-    fun checkPermissions(call: PluginCall) {
+    fun checkHealthPermissions(call: PluginCall) {
         val client = clientOrNull()
         if (client == null) { call.resolve(JSObject().put("granted", false)); return }
         CoroutineScope(Dispatchers.IO).launch {
@@ -99,7 +105,7 @@ class HealthConnectPlugin : Plugin() {
      * grant when it closes rather than trusting the activity result payload.
      */
     @PluginMethod
-    fun requestPermissions(call: PluginCall) {
+    fun requestHealthPermissions(call: PluginCall) {
         if (clientOrNull() == null) {
             call.reject("Health Connect is not available on this device.")
             return
@@ -117,7 +123,7 @@ class HealthConnectPlugin : Plugin() {
     @ActivityCallback
     private fun permissionsResult(call: PluginCall?, result: ActivityResult?) {
         if (call == null) return
-        checkPermissions(call)
+        checkHealthPermissions(call)
     }
 
     /** Opens Health Connect itself, so the user can review or revoke access. */
@@ -143,8 +149,12 @@ class HealthConnectPlugin : Plugin() {
     fun readWorkouts(call: PluginCall) {
         val client = clientOrNull()
         if (client == null) { call.reject("Health Connect is not available on this device."); return }
-        val startMs = call.getLong("startTime")
-        val endMs = call.getLong("endTime")
+        // Sent as strings on purpose. PluginCall.getLong() returns a value only
+        // when org.json happened to parse the number as a Long, and getDouble()
+        // rejects Longs — so the Java type of an epoch millisecond would be
+        // decided by the JSON parser, and the wrong guess yields a silent null.
+        val startMs = call.getString("startTime")?.toLongOrNull()
+        val endMs = call.getString("endTime")?.toLongOrNull()
         if (startMs == null || endMs == null) { call.reject("startTime and endTime are required."); return }
 
         CoroutineScope(Dispatchers.IO).launch {
