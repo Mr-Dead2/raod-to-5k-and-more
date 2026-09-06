@@ -17,7 +17,24 @@ const ALERT_CHANNEL = "stride-alerts";
 let alertSeq = 0;
 const nextAlertId = () => RUN_ID_BASE + (alertSeq = (alertSeq + 1) % 10000);
 
-const notif = async () => (await import("@capacitor/local-notifications")).LocalNotifications;
+// Returns the plugin wrapped in a plain object, and callers destructure it.
+//
+// This looks fussy and is not. A Capacitor plugin is a Proxy whose `get` trap
+// answers ANY property with a method wrapper — including `then`, which makes
+// every plugin proxy a thenable. Returning one from an `async` function hands
+// it to the promise-resolution procedure, which calls `proxy.then(resolve,
+// reject)`; that resolves to a "LocalNotifications.then() is not implemented"
+// rejection and never calls either callback, so the await never settles.
+//
+// This is what it looked like from the outside: every native notification call
+// hung forever. No daily reminder was ever scheduled, no km split was ever
+// posted, and `ensureNotificationPermission()` could not even fall back to its
+// own timeout, because that path awaited the proxy too. Never `await` or
+// `return` a plugin proxy from an async function.
+const notif = async () => {
+  const mod = await import("@capacitor/local-notifications");
+  return { ln: mod.LocalNotifications };
+};
 
 let channelsReady = false;
 async function ensureChannels(LocalNotifications) {
@@ -44,7 +61,7 @@ async function ensureChannels(LocalNotifications) {
 export async function nativeCheckPermission() {
   if (!isNative()) return "denied";
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     await ensureChannels(LocalNotifications);
     const { display } = await LocalNotifications.checkPermissions();
     return display === "granted" ? "granted" : display === "denied" ? "denied" : "prompt";
@@ -73,7 +90,7 @@ async function alreadyGranted(LocalNotifications) {
 export async function nativeEnsurePermission() {
   if (!isNative()) return false;
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     // Channels first: they must exist before the first notification is posted,
     // and creating them does not require permission.
     await ensureChannels(LocalNotifications);
@@ -89,7 +106,7 @@ export async function nativeEnsurePermission() {
 export async function nativeExactAlarmState() {
   if (!isNative()) return "unsupported";
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     const { exact_alarm: state } = await LocalNotifications.checkExactNotificationSetting();
     return state === "granted" ? "granted" : state === "denied" ? "denied" : "prompt";
   } catch { return "unsupported"; }
@@ -99,7 +116,7 @@ export async function nativeExactAlarmState() {
 export async function nativeRequestExactAlarm() {
   if (!isNative()) return "unsupported";
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     const { exact_alarm: state } = await LocalNotifications.changeExactNotificationSetting();
     return state === "granted" ? "granted" : "denied";
   } catch { return "unsupported"; }
@@ -107,7 +124,7 @@ export async function nativeRequestExactAlarm() {
 
 export async function nativeEnableReminder(time, message) {
   if (!isNative()) return false;
-  const LocalNotifications = await notif();
+  const { ln: LocalNotifications } = await notif();
   await ensureChannels(LocalNotifications);
   if (!(await granted(LocalNotifications))) return false;
   const [hour, minute] = String(time || "18:00").split(":").map(Number);
@@ -131,7 +148,7 @@ export async function nativeUpdateReminder(time, message) {
 
 export async function nativeDisableReminder() {
   if (!isNative()) return;
-  const LocalNotifications = await notif();
+  const { ln: LocalNotifications } = await notif();
   await LocalNotifications.cancel({ notifications: [{ id: DAILY_ID }] });
 }
 
@@ -139,7 +156,7 @@ export async function nativeDisableReminder() {
 export async function nativeRunNotification(title, body) {
   if (!isNative()) return false;
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     await ensureChannels(LocalNotifications);
     if (!(await alreadyGranted(LocalNotifications))) return false;
     // No `schedule`: the plugin then posts the notification straight away.
@@ -162,7 +179,7 @@ export async function nativeRunNotification(title, body) {
 export async function nativeLiveRun(title, body) {
   if (!isNative()) return false;
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     await ensureChannels(LocalNotifications);
     if (!(await alreadyGranted(LocalNotifications))) return false;
     // Posted immediately (no `schedule`) — see nativeRunNotification. Same id
@@ -183,7 +200,7 @@ export async function nativeLiveRun(title, body) {
 export async function nativeEndLiveRun() {
   if (!isNative()) return;
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     await LocalNotifications.cancel({ notifications: [{ id: LIVE_ID }] });
   } catch { /* already gone */ }
 }
@@ -211,7 +228,7 @@ export async function ensureLocationPermission({ timeoutMs = 12000 } = {}) {
 export async function nativeBootstrapNotifications() {
   if (!isNative()) return "denied";
   try {
-    const LocalNotifications = await notif();
+    const { ln: LocalNotifications } = await notif();
     await ensureChannels(LocalNotifications);
     const perm = await LocalNotifications.requestPermissions();
     return perm.display === "granted" ? "granted" : "denied";
