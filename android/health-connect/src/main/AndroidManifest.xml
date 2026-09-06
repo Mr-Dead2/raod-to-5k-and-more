@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Health Connect permissions and the <queries> entry are declared in the
+     app manifest instead, where they sit next to the rest of the app's
+     permissions and are easy to audit. This file exists only so the module has
+     a manifest of its own. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

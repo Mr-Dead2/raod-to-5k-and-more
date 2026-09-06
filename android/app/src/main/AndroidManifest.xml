@@ -18,7 +18,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Health Connect rationale on Android 13 and below. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
         </activity>
+
+        <!-- Health Connect will not grant read access unless the app can show
+             the user why it wants the data. On Android 14+ it looks for this
+             activity-alias; on older versions it looks for the same intent
+             filter on a launchable activity, so both are declared. Opening the
+             app is the rationale: the import screen explains it in place. -->
+        <activity-alias
+            android:name=".ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -66,6 +86,26 @@
     <!-- Haptics + keep screen awake while tracking -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Health Connect: read-only. Stride imports runs recorded elsewhere (a
+         watch syncing through Samsung Health, for instance) and never writes
+         back, so no write permission is requested. Only READ_EXERCISE is
+         required — the rest enrich an imported run and are optional at
+         runtime. -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+
+    <!-- Package visibility: without this, Android 11+ hides the Health Connect
+         provider and the SDK reports it as unavailable even when installed. -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
+    </queries>
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 </manifest>

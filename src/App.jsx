@@ -25,6 +25,10 @@ import {
   fmtDuration, CONFIDENCE_LABEL, DEFAULT_GOAL_RACE,
 } from "./goals.js";
 import {
+  healthSupported, healthAvailability, healthPermissionGranted,
+  requestHealthPermission, openHealthConnect, readWorkouts, planImport,
+} from "./health.js";
+import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
   ensureLocationPermission, styleStatusBar, nativeShareBackup,
   nativeBootstrapNotifications, onAppResume,
@@ -150,6 +154,11 @@ export default function App() {
   // install prompt
   const [installEvt, setInstallEvt] = useState(null);
 
+  // Health Connect import (runs recorded on a watch, via Samsung Health etc.)
+  const [hc, setHc] = useState({ availability: "NotSupported", granted: false });
+  const [hcScan, setHcScan] = useState(null);   // { ready, skipped } after a look
+  const [hcBusy, setHcBusy] = useState(false);
+
   // stopwatch
   const [swMs, setSwMs] = useState(0);
   const [swRun, setSwRun] = useState(false);
@@ -200,7 +209,23 @@ export default function App() {
   // Coming back from Android's notification settings should be reflected here
   // straight away, rather than leaving a "blocked" banner over a permission the
   // user has just granted.
-  useEffect(() => onAppResume(() => { permissionState().then(setPerm); }), []);
+  // Health Connect state can change entirely outside the app — the provider
+  // gets installed, access is granted or revoked in its own settings screen —
+  // so it is re-read on launch and on every return to the foreground.
+  const refreshHealth = async () => {
+    if (!healthSupported()) return { availability: "NotSupported", granted: false };
+    const availability = await healthAvailability();
+    const granted = availability === "Available" ? await healthPermissionGranted() : false;
+    const next = { availability, granted };
+    setHc(next);
+    return next;
+  };
+  useEffect(() => { refreshHealth(); }, []);
+
+  useEffect(() => onAppResume(() => {
+    permissionState().then(setPerm);
+    refreshHealth();
+  }), []);
 
   useEffect(() => {
     if (swRun) {
@@ -269,6 +294,45 @@ export default function App() {
             : "Blocked — allow them in your browser settings",
           label: "NOTIFICATIONS",
         });
+  };
+
+  // --- Health Connect import -----------------------------------------------
+  // Read-only: Stride pulls workouts in and never writes back, so the worst a
+  // mistake here can do is add a row the user can undo by unticking the day.
+
+  const connectHealth = async () => {
+    haptic(8);
+    setHcBusy(true);
+    const granted = await requestHealthPermission();
+    const next = await refreshHealth();
+    setHcBusy(false);
+    if (!granted && !next.granted) {
+      setToast({ icon: "⚠️", title: "Health Connect didn't grant access", label: "IMPORT" });
+    }
+  };
+
+  const scanHealth = async () => {
+    haptic(8);
+    setHcBusy(true);
+    setHcScan(null);
+    const workouts = await readWorkouts(30);
+    setHcScan(planImport(workouts, { flat: FLAT, log, startDate }));
+    setHcBusy(false);
+  };
+
+  // Applies the whole batch in one write. update() persists per call and would
+  // otherwise merge each run onto a stale `log`, so only the last would survive.
+  const applyHealthImport = () => {
+    if (!hcScan || hcScan.ready.length === 0) return;
+    const merged = { ...log };
+    for (const r of hcScan.ready) merged[r.key] = { ...(merged[r.key] || {}), ...r.entry };
+    persist(merged);
+    haptic([12, 30, 12]);
+    confetti({ count: 70 });
+    const n = hcScan.ready.length;
+    setToast({ icon: "⌚", title: `Imported ${n} run${n === 1 ? "" : "s"}`, label: "HEALTH CONNECT" });
+    setHcScan(null);
+    setTab("history");
   };
 
   const setAccentTheme = (id) => {
@@ -1130,6 +1194,102 @@ export default function App() {
               <NotifDiagnostics />
             </Card>
 
+            {/* Import runs recorded elsewhere (a watch, another app) */}
+            {healthSupported() && (
+              <Card style={{ marginBottom: 12 }}>
+                <Label>Import from your watch</Label>
+                {hc.availability !== "Available" ? (
+                  <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6 }}>
+                    {hc.availability === "NotInstalled"
+                      ? "Health Connect isn't set up on this phone yet. Install or update it from the Play Store, sync Samsung Health to it, then come back."
+                      : "This phone doesn't support Health Connect, so runs recorded on a watch can't be pulled in automatically."}
+                  </div>
+                ) : !hc.granted ? (
+                  <>
+                    <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, marginBottom: 11 }}>
+                      Runs your watch records reach the phone through its own app (Samsung Health, for
+                      example). Give Stride read access and they can be pulled into your history —
+                      Stride only ever reads, it never writes anything back.
+                    </div>
+                    <button onClick={connectHealth} disabled={hcBusy} className="tap cta"
+                      style={{ width: "100%", borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", opacity: hcBusy ? 0.6 : 1 }}>
+                      {hcBusy ? "Waiting for Health Connect…" : "Allow Stride to read workouts"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, marginBottom: 11 }}>
+                      Connected. Look for runs recorded in the last 30 days — walks and hikes count,
+                      rides and gym sessions don't, and anything Stride already tracked is left alone.
+                    </div>
+                    <button onClick={scanHealth} disabled={hcBusy} className="tap cta"
+                      style={{ width: "100%", borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", opacity: hcBusy ? 0.6 : 1 }}>
+                      {hcBusy ? "Looking…" : "Look for new runs"}
+                    </button>
+
+                    {hcScan && hcScan.ready.length === 0 && (
+                      <div className="rise" style={{ fontSize: 12, color: C.dim, marginTop: 12, lineHeight: 1.6 }}>
+                        Nothing new to import.
+                        {hcScan.skipped.length > 0
+                          ? ` ${hcScan.skipped.length} workout${hcScan.skipped.length === 1 ? " was" : "s were"} skipped — see below.`
+                          : " Health Connect has no workouts from the last 30 days; check that your watch's app is syncing into it."}
+                      </div>
+                    )}
+
+                    {hcScan && hcScan.ready.length > 0 && (
+                      <div className="rise" style={{ marginTop: 12 }}>
+                        <Label>Ready to import</Label>
+                        {hcScan.ready.map((r) => (
+                          <div key={r.w.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${C.line}` }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r.label}</div>
+                              <div style={{ fontSize: 11, color: C.dim2, marginTop: 2 }}>
+                                {r.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} → {r.key}
+                              </div>
+                            </div>
+                            <div style={{ textAlign: "right", flexShrink: 0 }}>
+                              <div className="num" style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                                {r.entry.km > 0 ? `${r.entry.km} km` : `${r.entry.min} min`}
+                              </div>
+                              {r.entry.km > 0 && <div style={{ fontSize: 10.5, color: C.dim }}>{r.entry.min} min</div>}
+                            </div>
+                          </div>
+                        ))}
+                        <button onClick={applyHealthImport} className="tap cta"
+                          style={{ width: "100%", marginTop: 12, borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
+                          Import {hcScan.ready.length} run{hcScan.ready.length === 1 ? "" : "s"}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Saying why something was skipped costs three lines and
+                        saves the user hunting for a bug that isn't there. */}
+                    {hcScan && hcScan.skipped.length > 0 && (
+                      <div className="rise" style={{ marginTop: 12 }}>
+                        <Label>Skipped</Label>
+                        {hcScan.skipped.slice(0, 8).map((sk, i) => (
+                          <div key={sk.w.id || i} style={{ display: "flex", gap: 8, fontSize: 11, color: C.dim2, padding: "4px 0", lineHeight: 1.5 }}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              {sk.label} · {sk.when.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </span>
+                            <span style={{ flexShrink: 0 }}>{sk.reason}</span>
+                          </div>
+                        ))}
+                        {hcScan.skipped.length > 8 && (
+                          <div style={{ fontSize: 11, color: C.dim2, paddingTop: 4 }}>…and {hcScan.skipped.length - 8} more.</div>
+                        )}
+                      </div>
+                    )}
+
+                    <button onClick={() => { haptic(6); openHealthConnect(); }} className="chip tap"
+                      style={{ width: "100%", marginTop: 12, background: C.surface2, color: C.text, padding: "10px 0", fontSize: 12 }}>
+                      Open Health Connect
+                    </button>
+                  </>
+                )}
+              </Card>
+            )}
+
             {/* Data & backup */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Data &amp; backup</Label>
@@ -1370,6 +1530,7 @@ export default function App() {
                           <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH</div>}
                           {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
+                          {h.e.imported && !h.e.tracked && <div style={{ fontSize: 9, color: C.dim, fontWeight: 800, letterSpacing: 1 }}>● IMPORTED</div>}
                           {parseFloat(h.e.km) > 0 && (
                             <button onClick={() => { haptic(8); shareRunCard({ km: h.e.km, min: h.e.min, durMs: h.e.durMs, route: h.e.route, elev: h.e.elev, kcal: h.e.kcal, runKm: h.e.runKm, walkKm: h.e.walkKm, date: h.e.date }); }}
                               className="chip" style={{ padding: "4px 10px", fontSize: 10, marginTop: 5 }}>

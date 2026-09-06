@@ -1,0 +1,71 @@
+// Local Capacitor plugin module: a thin bridge to Android's Health Connect,
+// used to import runs recorded elsewhere (a Galaxy Watch syncing through
+// Samsung Health, say) into Stride's own history.
+//
+// It lives here rather than in node_modules because no published Capacitor 6
+// plugin can read workouts: capacitor-health-connect has no ExerciseSession
+// record type at all, and @capgo/capacitor-health requires Capacitor 8.
+//
+// Structure mirrors the Capacitor community plugins (own buildscript, versions
+// inherited from the root project where set) so it builds with the same pinned
+// AGP 8.2.1 / Gradle 8.2.1 toolchain as everything else.
+ext {
+    androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.6.1'
+    healthConnectVersion = project.hasProperty('healthConnectVersion') ? rootProject.ext.healthConnectVersion : '1.0.0'
+    coroutinesVersion = project.hasProperty('coroutinesVersion') ? rootProject.ext.coroutinesVersion : '1.7.3'
+}
+
+buildscript {
+    ext.kotlin_version = project.hasProperty("kotlin_version") ? rootProject.ext.kotlin_version : '1.9.10'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace "com.road5k.tracker.healthconnect"
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    defaultConfig {
+        // Health Connect's client library is API 26+, which is why the whole
+        // app was raised to 26 — see android/variables.gradle.
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 26
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    lintOptions {
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.health.connect:connect-client:$healthConnectVersion"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+}
