@@ -45,7 +45,10 @@ export function readableError(e) {
   if (/BLE is not supported|not supported/i.test(msg)) return "This device has no Bluetooth LE support.";
   if (/disabled|not enabled/i.test(msg)) return "Bluetooth is switched off — turn it on and try again.";
   if (/no device found/i.test(msg)) {
-    return "Nothing nearby is broadcasting heart rate. A watch has to be running an HR-broadcast app to appear here — being paired to the phone is not enough.";
+    return "Nothing nearby is broadcasting heart rate. A watch has to be running an HR-broadcast app to appear here — being paired to the phone is not enough. Tap \u201cShow every nearby device\u201d to see what Bluetooth can actually see.";
+  }
+  if (/characteristic not found|service not found/i.test(msg)) {
+    return "That device connected, but it doesn't offer the Bluetooth heart-rate service, so it can't send a pulse. Samsung watches don't unless an HR-broadcast app is running on the watch itself.";
   }
   if (/timeout|timed out/i.test(msg)) return "No heart-rate device answered. Check it is switched on, broadcasting, and close by.";
   if (/not connected|disconnected/i.test(msg)) return "The connection dropped before it settled. Try again.";
@@ -123,8 +126,16 @@ export function useHeartRate() {
   }, []);
 
   // `silent: true` skips the picker and goes straight for the device used last
-  // time — the one-tap path once a strap or watch is known.
-  const connect = useCallback(async ({ silent = false } = {}) => {
+  // time. `anyDevice: true` drops the heart-rate filter from the scan, so the
+  // picker lists every BLE device in range.
+  //
+  // That second one exists because a filtered scan cannot tell "your watch is
+  // not broadcasting heart rate" apart from "the scan is broken" — both are an
+  // empty list. Letting the user point the app straight at the watch turns a
+  // guess into an answer: either it works, or the connection succeeds and the
+  // heart-rate characteristic is missing, which says plainly that the device
+  // has no pulse to give.
+  const connect = useCallback(async ({ silent = false, anyDevice = false } = {}) => {
     setError(null);
     setStatus("connecting");
     keepAlive.current = true;
@@ -176,13 +187,30 @@ export function useHeartRate() {
         id = saved.hrDeviceId;
         name = saved.hrDeviceName || "Heart rate monitor";
       } else {
-        const device = await BleClient.requestDevice({ services: [HR_SERVICE] });
+        // optionalServices matters on the web, where a service not named up
+        // front cannot be read afterwards; on Android it is ignored.
+        const device = await BleClient.requestDevice(
+          anyDevice ? { optionalServices: [HR_SERVICE] } : { services: [HR_SERVICE] }
+        );
         id = device.deviceId;
-        name = device.name || "Heart rate monitor";
+        name = device.name || (anyDevice ? "That device" : "Heart rate monitor");
         saveSettings({ ...loadSettings(), hrDeviceId: id, hrDeviceName: name });
         setHasSavedDevice(true);
       }
-      await open(BleClient, id, name);
+      try {
+        await open(BleClient, id, name);
+      } catch (e) {
+        // Connected, but it has no heart-rate characteristic. Drop the GATT
+        // link rather than leaving it open on a device we cannot use.
+        if (/characteristic not found|service not found/i.test(String(e?.message || e))) {
+          try { await BleClient.disconnect(id); } catch { /* already gone */ }
+          keepAlive.current = false;
+          setStatus("idle");
+          setError(`${name} connected, but doesn't offer the Bluetooth heart-rate service, so it can't send a pulse. A watch needs an HR-broadcast app running on the watch itself.`);
+          return false;
+        }
+        throw e;
+      }
       return true;
     } catch (e) {
       keepAlive.current = false;

@@ -395,11 +395,23 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
                 )}
                 {/* A remembered device connects with one tap; the picker has to
                     stay reachable for a second strap, or a wrong first pick. */}
-                {hr.hasSavedDevice && hr.status !== "connected" && hr.status !== "connecting" && hr.status !== "reconnecting" && (
-                  <button onClick={() => { hr.connect({ silent: false }); haptic(6); }}
-                    style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
-                    Pick a different device
-                  </button>
+                {hr.status !== "connected" && hr.status !== "connecting" && hr.status !== "reconnecting" && (
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                    {hr.hasSavedDevice && (
+                      <button onClick={() => { hr.connect({ silent: false }); haptic(6); }}
+                        style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
+                        Pick a different device
+                      </button>
+                    )}
+                    {/* A filtered scan can't tell "your watch isn't broadcasting"
+                        apart from "the scan is broken" — both look like an empty
+                        list. This drops the filter so you can see what Bluetooth
+                        actually sees, and point the app straight at the watch. */}
+                    <button onClick={() => { hr.connect({ anyDevice: true }); haptic(6); }}
+                      style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
+                      Show every nearby device
+                    </button>
+                  </div>
                 )}
                 {hr.error && (
                   <div className="rise" onClick={hr.dismissError} style={{
