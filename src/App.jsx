@@ -112,6 +112,7 @@ export default function App() {
   const [tab, setTab] = useState("plan"); // plan | stats | history
   const [tipsOpen, setTipsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const notifCardRef = useRef(null);
   const [startDate, setStartDate] = useState("");
   const [toast, setToast] = useState(null);
   const [trackerOpen, setTrackerOpen] = useState(false);
@@ -333,6 +334,17 @@ export default function App() {
     setToast({ icon: "⌚", title: `Imported ${n} run${n === 1 ? "" : "s"}`, label: "HEALTH CONNECT" });
     setHcScan(null);
     setTab("history");
+  };
+
+  // The notification centre is three levels down (Stats, then a collapsed
+  // "Settings & tools", then a scroll), which is precisely where nobody looks
+  // when notifications are the thing that is broken. This is the shortcut.
+  const goToNotifications = () => {
+    haptic(8);
+    setTab("stats");
+    setSettingsOpen(true);
+    // After the section has expanded and painted.
+    setTimeout(() => notifCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
   };
 
   const setAccentTheme = (id) => {
@@ -745,8 +757,8 @@ export default function App() {
       {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
     </div>
   );
-  const Card = ({ children, style, className = "" }) => (
-    <div className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
+  const Card = ({ children, style, className = "", innerRef }) => (
+    <div ref={innerRef} className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
   );
   const Label = ({ children, right }) => (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
@@ -1114,7 +1126,7 @@ export default function App() {
             </Card>
 
             {/* Notifications */}
-            <Card style={{ marginBottom: 12 }}>
+            <Card style={{ marginBottom: 12 }} innerRef={notifCardRef}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ flex: 1 }}>
                   <div className="lab" style={{ marginBottom: 0 }}>Daily reminder</div>
@@ -1594,6 +1606,20 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
+            {/* Notifications being off is not a settings-screen detail — it is
+                the reason the reminders and run alerts the user switched on are
+                never arriving, so it is said here, where they actually look. */}
+            {(isNative() || notificationsSupported()) && perm !== "granted" && (
+              <button onClick={goToNotifications} className="chip tap"
+                style={{
+                  width: "100%", padding: "11px 14px", marginBottom: 14, fontSize: 12.5,
+                  background: tint(C.warn, .14), color: C.text, border: `1px solid ${tint(C.warn, .45)}`,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textAlign: "left",
+                }}>
+                <Icon name="bell" size={14} />
+                Notifications are off — reminders and run alerts can't reach you. Fix
+              </button>
+            )}
             {!startDate && (
               <button onClick={() => { setTab("stats"); haptic(8); }} className="chip"
                 style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.surface, color: C.text, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>

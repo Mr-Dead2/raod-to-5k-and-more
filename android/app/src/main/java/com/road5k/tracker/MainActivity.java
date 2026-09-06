@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         // `cap sync`; this one lives in the repo, so it has to be declared
         // before super.onCreate() starts the bridge.
         registerPlugin(HealthConnectPlugin.class);
+        registerPlugin(DeviceNotificationsPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
