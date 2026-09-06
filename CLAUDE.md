@@ -312,6 +312,25 @@ front — the other headline reason to go native.
   one-time buzz + voice cue when reached. Both are best-effort and degrade to
   hidden when unsupported; cadence + a `spm` chip also appear in History and feed
   the AI coach summary.
+- **Heart rate (`src/hr.js`).** `useHeartRate()` speaks the standard BLE Heart
+  Rate service (0x180D) through `@capacitor-community/bluetooth-le` — Web
+  Bluetooth in the browser, native BLE in the app — and RunTracker averages the
+  stream into `hrAvg`/`hrMax` on the saved session. `initialize()` is what
+  requests `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` on Android 12+, so it is where a
+  permission refusal surfaces; the hook also checks `isEnabled()` and asks
+  Android to switch the radio on. **Never swallow a connect failure** — it used
+  to catch everything and drop silently back to idle, which made the button look
+  broken whatever the real cause; `readableError()` turns the rejection into
+  something actionable and the picker being cancelled stays quiet. The last
+  device is remembered (`hrDeviceId`/`hrDeviceName` settings) so reconnecting is
+  one tap, and a dropped link **auto-reconnects** (15 tries, 4 s apart) because a
+  watch broadcast app blinks constantly; the HR row stays on screen while
+  reconnecting so the layout does not jump mid-run.
+  **Samsung watches do not broadcast heart rate on their own** — no HR profile,
+  on Tizen or Wear OS — so a Galaxy Watch only appears as a monitor while it runs
+  a third-party broadcast app. On the Tizen watches (Watch 3 and earlier) those
+  can no longer be obtained: Samsung ended Galaxy Store downloads for Tizen watch
+  content in 2025. Do not restore UI copy telling people to go and install one.
 - **Route planning on the real road network (`src/routing.js` +
   `src/components/RouteMaker.jsx`).** `routing.js` downloads the runnable ways
   around a point from the **Overpass API** (free, no key; several mirrors are
