@@ -222,7 +222,31 @@ front — the other headline reason to go native.
   have landed, since an installed PWA or side-loaded APK can be running old
   code), permission, service-worker and background-sync state, and its test
   button asks the browser whether a notification *actually exists* afterwards
-  rather than trusting that the call did not throw. The settings switches render
+  rather than trusting that the call did not throw. **It must never be able to
+  hang or vanish**: it is what someone opens precisely when a native call is
+  stuck, so every probe carries its own deadline, the panel renders before any
+  of them resolve, and each row writes itself as its own answer lands (chaining
+  them held every row at "checking…" for the sum of all the deadlines, and an
+  unbounded await once made the whole panel render `null` — the one screen that
+  could have explained a hang, erased by it). A row distinguishes `undefined`,
+  meaning still looking, from an answer, so it never accuses the phone of
+  something while it is merely still loading. Because the panel sits three
+  levels down (Stats → a collapsed "Settings & tools" → a scroll), the Plan tab
+  carries a banner straight to it whenever permission is missing — that is where
+  people actually look when notifications are broken.
+  Natively it also reports what only Android knows, through the local
+  `DeviceNotifications` plugin (`android/app/.../DeviceNotificationsPlugin.java`,
+  in Java because the app module has no Kotlin plugin applied and none of it
+  needs coroutines): the app-level notification switch, each channel's
+  importance and whether it is **blocked**, battery-optimisation state, and
+  exact alarms — each with a button to the system screen that fixes it, and a
+  fallback to app info because skinned builds drop settings screens. The
+  POST_NOTIFICATIONS grant is only one of four independent things that silently
+  stop a notification, and on a power-managed phone (Nothing OS, MIUI, One UI)
+  it is rarely the one that is wrong. Note especially that **Android freezes a
+  channel's importance at creation**: changing it in code does nothing to an
+  install that already has the channel, so only the user or a reinstall can
+  raise it. The settings switches render
   muted rather than accent while permission is missing, because an accent switch
   that cannot fire is a lie. `showNotice` races `navigator.serviceWorker.ready`
   against a timeout (that promise never rejects, so an uncontrolled page would

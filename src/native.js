@@ -1,7 +1,7 @@
 // Capacitor bridge. Every export no-ops on the web (guarded by
 // Capacitor.isNativePlatform()) so a single codebase runs in the browser and
 // in the Android app.
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 
 export const isNative = () => Capacitor.isNativePlatform();
 
@@ -252,6 +252,29 @@ export async function nativeShareBackup(json, filename) {
 // re-reading permissions: a user who grants notifications in Android's settings
 // screen must not come back to a UI still insisting they are blocked.
 // Returns a cleanup function (a no-op on the web).
+// Device-level notification diagnosis: the app switch, each channel, battery
+// optimisation and exact alarms, answered by Android rather than inferred.
+// The LocalNotifications permission is only one of four things that silently
+// stop a notification, and on power-managed phones it is rarely the culprit.
+let _deviceNotif = null;
+const deviceNotif = () => (_deviceNotif = _deviceNotif || registerPlugin("DeviceNotifications"));
+
+export async function nativeNotificationReport() {
+  if (!isNative()) return null;
+  try { return await deviceNotif().report(); } catch { return null; }
+}
+
+// Each returns false when the screen could not be opened, so the UI can say so
+// instead of leaving the user staring at a button that did nothing.
+async function openScreen(method, opts) {
+  if (!isNative()) return false;
+  try { await deviceNotif()[method](opts); return true; } catch { return false; }
+}
+export const openNotificationSettings = () => openScreen("openNotificationSettings");
+export const openChannelSettings = (id) => openScreen("openChannelSettings", { id });
+export const openBatterySettings = () => openScreen("openBatterySettings");
+export const openAppSettings = () => openScreen("openAppSettings");
+
 export function onAppResume(cb) {
   if (!isNative()) return () => {};
   let remove = null, dead = false;
