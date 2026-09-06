@@ -47,7 +47,7 @@ export async function healthAvailability() {
 export async function healthPermissionGranted() {
   if (!healthSupported()) return false;
   try {
-    const { granted } = await HealthConnect.checkPermissions();
+    const { granted } = await HealthConnect.checkHealthPermissions();
     return !!granted;
   } catch { return false; }
 }
@@ -55,7 +55,7 @@ export async function healthPermissionGranted() {
 export async function requestHealthPermission() {
   if (!healthSupported()) return false;
   try {
-    const { granted } = await HealthConnect.requestPermissions();
+    const { granted } = await HealthConnect.requestHealthPermissions();
     return !!granted;
   } catch { return false; }
 }
@@ -71,7 +71,12 @@ export async function readWorkouts(days = 30) {
   const endTime = Date.now();
   const startTime = endTime - days * 86400000;
   try {
-    const { workouts } = await HealthConnect.readWorkouts({ startTime, endTime });
+    // Strings, not numbers: an epoch millisecond's Java type on the other side
+    // depends on how org.json parses it, and Capacitor's getLong/getDouble each
+    // accept only one of those types. See the note in HealthConnectPlugin.kt.
+    const { workouts } = await HealthConnect.readWorkouts({
+      startTime: String(startTime), endTime: String(endTime),
+    });
     return (workouts || []).slice().sort((a, b) => b.startTime - a.startTime);
   } catch { return []; }
 }
