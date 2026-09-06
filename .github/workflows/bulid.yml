@@ -2,7 +2,10 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    # Feature branches build too: the Android toolchain can't run in the
+    # development sandbox, so CI is the only thing that actually compiles the
+    # native code. Waiting until merge to find that out is too late.
+    branches: [ main, 'claude/**' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
