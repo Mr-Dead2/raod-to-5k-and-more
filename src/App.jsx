@@ -15,7 +15,7 @@ import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, askCoach, generatePlanBlock, adaptPlanBlock, coachRun, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
-  notificationsSupported, permission, loadReminder, saveReminder,
+  notificationsSupported, permissionState, loadReminder, saveReminder,
   enableReminders, disableReminders, showReminderNow, syncMessage,
   startForegroundScheduler, notifyMilestone,
   ensureNotificationPermission,
@@ -27,6 +27,7 @@ import {
 import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
   ensureLocationPermission, styleStatusBar, nativeShareBackup,
+  nativeBootstrapNotifications, onAppResume,
 } from "./native.js";
 
 // Tiny inline icon set (stroke follows text color) — keeps UI chrome free of
@@ -173,10 +174,21 @@ export default function App() {
       setRemTime(r.time || "18:00");
       setNotif({ runLive: r.runLive !== false, runKm: r.runKm !== false, runInterval: r.runInterval !== false, runFinish: r.runFinish !== false, milestone: r.milestone !== false, skipRest: !!r.skipRest });
     })();
-    if (notificationsSupported()) setPerm(permission());
     // native app setup (no-ops on the web)
     styleStatusBar();
-    ensureLocationPermission();
+    (async () => {
+      // Android grants nothing unless something asks, and until now nothing in
+      // the launch path ever did — a fresh APK install could run for weeks
+      // without a single permission dialog. Ask once, on the first launch only,
+      // so we don't burn Android's limited prompt budget on every start.
+      if (isNative() && !loadSettings().askedNotifPerm) {
+        saveSettings({ ...loadSettings(), askedNotifPerm: true });
+        await nativeBootstrapNotifications();
+      }
+      setPerm(await permissionState());
+      // Location is requested up front too, but never blocks the UI.
+      ensureLocationPermission();
+    })();
   }, []);
 
   useEffect(() => {
@@ -184,6 +196,11 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", h);
     return () => window.removeEventListener("beforeinstallprompt", h);
   }, []);
+
+  // Coming back from Android's notification settings should be reflected here
+  // straight away, rather than leaving a "blocked" banner over a permission the
+  // user has just granted.
+  useEffect(() => onAppResume(() => { permissionState().then(setPerm); }), []);
 
   useEffect(() => {
     if (swRun) {
@@ -234,7 +251,7 @@ export default function App() {
     // Switching an alert on is worthless if the browser was never asked.
     if (next[key] && key !== "skipRest") {
       await ensureNotificationPermission();
-      if (notificationsSupported()) setPerm(permission());
+      setPerm(await permissionState());
     }
   };
 
@@ -242,10 +259,16 @@ export default function App() {
   const askNotificationPermission = async () => {
     haptic(8);
     const ok = await ensureNotificationPermission();
-    if (notificationsSupported()) setPerm(permission());
+    setPerm(await permissionState());
     setToast(ok
       ? { icon: "🔔", title: "Notifications are on", label: "NOTIFICATIONS" }
-      : { icon: "⚠️", title: "Blocked — allow them in your browser settings", label: "NOTIFICATIONS" });
+      : {
+          icon: "⚠️",
+          title: isNative()
+            ? "Blocked — turn Stride's notifications on in Android settings"
+            : "Blocked — allow them in your browser settings",
+          label: "NOTIFICATIONS",
+        });
   };
 
   const setAccentTheme = (id) => {
@@ -623,7 +646,7 @@ export default function App() {
         ? await nativeEnableReminder(remTime, msgRef.current)
         : await enableReminders(remTime, msgRef.current);
       if (ok) await saveReminder({ enabled: true, time: remTime, message: msgRef.current });
-      setRemOn(ok); setPerm(permission());
+      setRemOn(ok); setPerm(await permissionState());
       if (ok && !isNative()) showReminderNow(`Reminders on — I'll nudge you around ${remTime} ✅`);
     }
   };
@@ -1048,7 +1071,7 @@ export default function App() {
 
               {/* Until permission is granted every switch below is inert, so say
                   so loudly rather than showing a row of confident green toggles. */}
-              {!isNative() && notificationsSupported() && perm !== "granted" && (
+              {(isNative() || notificationsSupported()) && perm !== "granted" && (
                 <div style={{
                   borderRadius: 14, padding: "13px 14px", marginBottom: 14,
                   background: `linear-gradient(150deg,${tint(C.warn, .16)},${C.surface2} 70%)`,
@@ -1058,9 +1081,13 @@ export default function App() {
                     {perm === "denied" ? "Notifications are blocked" : "Notifications aren't switched on yet"}
                   </div>
                   <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, lineHeight: 1.5 }}>
-                    {perm === "denied"
-                      ? "Your browser is blocking them for this site. Open the padlock or site settings next to the address bar and allow notifications, then come back."
-                      : "The switches below do nothing until your browser gives Stride permission."}
+                    {isNative()
+                      ? perm === "denied"
+                        ? "Android is blocking Stride. Open Settings › Apps › Stride › Notifications and allow them, then come back — the app cannot undo this itself."
+                        : "Android hasn't been asked yet. The switches below do nothing until it says yes."
+                      : perm === "denied"
+                        ? "Your browser is blocking them for this site. Open the padlock or site settings next to the address bar and allow notifications, then come back."
+                        : "The switches below do nothing until your browser gives Stride permission."}
                   </div>
                   {perm !== "denied" && (
                     <button onClick={askNotificationPermission} className="tap cta"
@@ -1084,7 +1111,7 @@ export default function App() {
                 ["skipRest", "Stay quiet on rest days", "Skip the daily nudge when the plan says rest"],
               ].map(([key, title, desc]) => {
                 // A switch that is on but can't fire is shown muted, not accent.
-                const live = notif[key] && (key === "skipRest" || isNative() || perm === "granted");
+                const live = notif[key] && (key === "skipRest" || perm === "granted");
                 return (
                   <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>

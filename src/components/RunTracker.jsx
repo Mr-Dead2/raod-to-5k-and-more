@@ -161,6 +161,10 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
   }, [hr.bpm, t.status]);
   const hrAvg = hrAgg.current.n ? Math.round(hrAgg.current.sum / hrAgg.current.n) : 0;
   const hrMax = hrAgg.current.max;
+  // A monitor that is momentarily reconnecting still counts as present: hiding
+  // its row would make the whole screen jump every time a watch's broadcast app
+  // blinks, and would read as "gone" when it is coming straight back.
+  const hrLive = hr.status === "connected" || hr.status === "reconnecting";
 
   // spoken / beep cue whenever a new km split is recorded
   const prevSplits = useRef(0);
@@ -249,13 +253,15 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
   const beginRun = async () => {
     haptic(15); primeAudio();
     hrAgg.current = { sum: 0, n: 0, max: 0 };
-    await ensureLocationPermission();
-    // Ask for notification permission here rather than never: the in-run alerts
-    // are switched on by default, and a browser only prompts when asked. NOT
-    // awaited — a prompt the runner ignores would otherwise hang the countdown
-    // and the run would never start.
+    // Nothing on this path may be awaited. Every one of these can raise a system
+    // permission dialog, and a dialog the runner ignores (or swipes away) leaves
+    // its promise pending for the life of the app — awaiting one meant tapping
+    // Start and watching nothing happen. Ask for all three, start the countdown
+    // regardless: the location watcher asks again itself when it starts, and the
+    // alerts simply stay quiet if the answer never comes.
+    ensureLocationPermission().catch(() => {});
     primeRunNotifications().catch(() => {});
-    if (cadenceOn) await ensureMotionPermission();
+    if (cadenceOn) ensureMotionPermission().catch(() => {});
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);
     countIv.current = setInterval(() => {
@@ -382,12 +388,33 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
                   <Toggle on label={`${hr.deviceName}${hr.bpm ? ` · ${hr.bpm} bpm` : ""} — tap to disconnect`}
                     onClick={() => { hr.disconnect(); haptic(6); }} />
                 ) : (
-                  <Toggle on={false} label={hr.status === "connecting" ? "Connecting…" : "Connect heart-rate monitor"}
-                    onClick={() => { hr.connect(); haptic(6); }} />
+                  <Toggle on={false}
+                    label={hr.status === "connecting" ? "Connecting…"
+                      : hr.status === "reconnecting" ? "Reconnecting…"
+                      : hr.hasSavedDevice ? "Connect heart-rate monitor" : "Find a heart-rate monitor"}
+                    onClick={() => { hr.connect({ silent: hr.hasSavedDevice }); haptic(6); }} />
+                )}
+                {/* A remembered device connects with one tap; the picker has to
+                    stay reachable for a second strap, or a wrong first pick. */}
+                {hr.hasSavedDevice && hr.status !== "connected" && hr.status !== "connecting" && hr.status !== "reconnecting" && (
+                  <button onClick={() => { hr.connect({ silent: false }); haptic(6); }}
+                    style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
+                    Pick a different device
+                  </button>
+                )}
+                {hr.error && (
+                  <div className="rise" onClick={hr.dismissError} style={{
+                    marginTop: 8, borderRadius: 10, padding: "9px 11px", fontSize: 11, lineHeight: 1.5,
+                    color: C.text, cursor: "pointer",
+                    background: tint(C.warn, .12), border: `1px solid ${tint(C.warn, .45)}`,
+                  }}>{hr.error}</div>
                 )}
                 <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
-                  Works with any Bluetooth heart-rate device. Galaxy Watch: install a free
-                  HR-broadcast app on the watch (e.g. “Heart for Bluetooth”), start it, then connect here.
+                  Works with any Bluetooth heart-rate strap or band.{" "}
+                  <b style={{ color: C.dim }}>Galaxy Watch:</b> Samsung watches don't broadcast heart
+                  rate on their own — the watch has to be running an HR-broadcast app, and on the
+                  Tizen watches (Watch 3 and older) those can no longer be installed from the Galaxy
+                  Store. If you already have one, start it on the watch first, then connect here.
                 </div>
               </div>
             )}
@@ -444,21 +471,22 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
             <Big label="AVG PACE" value={fmtPace(avgPace)} />
             <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
           </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: cadenceOn || hr.status === "connected" ? 10 : 18 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: cadenceOn || hrLive ? 10 : 18 }}>
             <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
             <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
             <Big label="KCAL" value={Math.round(kcal)} />
           </div>
           {cadenceOn && (
-            <div style={{ display: "flex", gap: 8, marginBottom: hr.status === "connected" ? 10 : 18 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: hrLive ? 10 : 18 }}>
               <Big label="CADENCE SPM" value={cad.cadence || "--"} color={C.accent} />
               <Big label="AVG SPM" value={avgCadence || "--"} />
               <Big label="STEPS" value={cad.steps || "--"} />
             </div>
           )}
-          {hr.status === "connected" && (
+          {hrLive && (
             <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-              <Big label="HEART RATE" value={hr.bpm ?? "--"} color={C.warn} />
+              <Big label={hr.status === "reconnecting" ? "HR · RECONNECTING" : "HEART RATE"}
+                value={hr.bpm ?? "--"} color={C.warn} />
               <Big label="AVG HR" value={hrAvg || "--"} />
               <Big label="MAX HR" value={hrMax || "--"} />
             </div>

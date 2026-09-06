@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { C, tint } from "../data.js";
 import { haptic } from "../celebrate.js";
-import { isNative } from "../native.js";
+import { isNative, nativeExactAlarmState, nativeRequestExactAlarm } from "../native.js";
 import {
-  notificationsSupported, permission, loadReminder,
+  notificationsSupported, permissionState, loadReminder,
   ensureNotificationPermission, sendTestNotification,
 } from "../notifications.js";
 
@@ -47,7 +47,12 @@ export function NotifDiagnostics() {
     const standalone = typeof window !== "undefined" &&
       (window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true);
     const supported = notificationsSupported();
-    const perm = native ? "n/a (native)" : permission();
+    // Native permission comes from Android, not from `Notification.permission`
+    // — the WebView has no such object, so the web reading is always "denied".
+    const perm = await permissionState();
+    // Android 12+ only grants exact alarms if the user allows them. Without one
+    // the daily reminder still arrives, but Doze can delay it by many minutes.
+    const exact = native ? await nativeExactAlarmState() : "n/a";
 
     let sw = "unsupported in this browser";
     let swOk = false;
@@ -69,7 +74,7 @@ export function NotifDiagnostics() {
     }
 
     const r = await loadReminder();
-    return { native, standalone, supported, perm, sw, swOk, background, reminder: r };
+    return { native, standalone, supported, perm, exact, sw, swOk, background, reminder: r };
   }, []);
 
   useEffect(() => { collect().then(setD); }, [collect]);
@@ -82,7 +87,7 @@ export function NotifDiagnostics() {
     setTestResult(null);
     try {
       const granted = await ensureNotificationPermission();
-      if (!granted && !isNative()) {
+      if (!granted) {
         setTestResult({ ok: false, msg: "Permission is not granted, so nothing can be shown." });
       } else {
         const sent = await sendTestNotification();
@@ -104,10 +109,16 @@ export function NotifDiagnostics() {
     setD(await collect());
   };
 
+  const askExact = async () => {
+    haptic(10);
+    await nativeRequestExactAlarm();
+    setD(await collect());
+  };
+
   if (!d) return null;
 
   const where = d.native ? "Native Android app" : d.standalone ? "Installed app (PWA)" : "Browser tab";
-  const permState = d.native ? "info" : d.perm === "granted" ? "good" : d.perm === "denied" ? "bad" : "warn";
+  const permState = d.perm === "granted" ? "good" : d.perm === "denied" ? "bad" : "warn";
   const build = BUILD_TIME
     ? new Date(BUILD_TIME).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : "unknown";
@@ -135,10 +146,20 @@ export function NotifDiagnostics() {
 
       <Row state={permState} label="Permission" value={d.perm}
         note={d.perm === "denied"
-          ? "Blocked. The app cannot undo this — allow notifications for this site in your browser's site settings, then reopen Stride."
+          ? d.native
+            ? "Blocked by Android. The app cannot undo this — open Settings › Apps › Stride › Notifications, allow them, then come back."
+            : "Blocked. The app cannot undo this — allow notifications for this site in your browser's site settings, then reopen Stride."
           : d.perm === "default"
             ? "Never asked or never answered. Use the button below."
             : null} />
+
+      {d.native && d.exact !== "unsupported" && (
+        <Row state={d.exact === "granted" ? "good" : "warn"} label="Exact alarms"
+          value={d.exact === "granted" ? "allowed" : "not allowed"}
+          note={d.exact === "granted"
+            ? null
+            : "Android is holding the daily reminder to an inexact alarm, so it can arrive minutes late. Tap below to allow exact alarms."} />
+      )}
 
       {!d.native && (
         <Row state={d.swOk ? "good" : "warn"} label="Background worker" value={d.sw}
@@ -154,6 +175,13 @@ export function NotifDiagnostics() {
       <Row state={d.reminder.enabled ? "good" : "info"} label="Daily reminder"
         value={d.reminder.enabled ? `on at ${d.reminder.time}` : "off"}
         note={d.reminder.enabled && d.reminder.lastFired ? `Last fired ${d.reminder.lastFired}.` : null} />
+
+      {d.native && d.exact !== "unsupported" && d.exact !== "granted" && (
+        <button onClick={askExact} className="tap chip"
+          style={{ width: "100%", marginTop: 12, borderRadius: 12, padding: "11px 0", fontSize: 12.5, fontWeight: 700, background: C.surface2, color: C.text, cursor: "pointer" }}>
+          Allow exact alarms
+        </button>
+      )}
 
       <button onClick={runTest} disabled={testing} className="tap cta"
         style={{ width: "100%", marginTop: 12, borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", opacity: testing ? 0.6 : 1 }}>

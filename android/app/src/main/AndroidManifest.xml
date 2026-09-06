@@ -54,6 +54,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Android 12+ downgrades the daily reminder to an inexact alarm unless
+         the app can schedule exact ones, which can push it minutes past the
+         time the user picked. Declaring this makes Stride appear in Settings ›
+         Apps › Special app access › Alarms & reminders, so the notification
+         centre's "Allow exact alarms" button has something to open. It is
+         requestable, not automatic — without it the reminder still fires, just
+         approximately. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <!-- Haptics + keep screen awake while tracking -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
