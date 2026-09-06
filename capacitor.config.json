@@ -6,7 +6,7 @@
   "android": { "backgroundColor": "#0c0d10" },
   "plugins": {
     "LocalNotifications": {
-      "smallIcon": "ic_stat_icon_config_sample",
+      "smallIcon": "ic_stat_stride",
       "iconColor": "#ccff33"
     }
   }

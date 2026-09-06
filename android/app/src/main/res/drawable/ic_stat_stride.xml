@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar notification icon: the Stride mark (broken ring + two upward
+     chevrons) as a flat white silhouette. Android renders notification small
+     icons as an alpha mask and tints them itself (the tint comes from
+     `iconColor` in capacitor.config.json), so this must be white with a
+     transparent background and no detail that vanishes at 24dp.
+
+     Before this existed, capacitor.config.json pointed `smallIcon` at
+     `ic_stat_icon_config_sample` — a drawable that ships with no Capacitor
+     project — so every notification fell back to Android's generic grey
+     information icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M16.5,19.79 A9,9 0 1 1 20.86,10.44"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M8.4,13.2 L12,9.6 L15.6,13.2"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M8.4,16.6 L12,13 L15.6,16.6"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

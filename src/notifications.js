@@ -6,7 +6,10 @@
 // Settings live in IndexedDB, not localStorage, because the service worker has
 // to read them while the app is closed.
 import { idbGet, idbSet } from "./idb.js";
-import { isNative, nativeLiveRun, nativeEndLiveRun, nativeRunNotification, nativeEnsurePermission } from "./native.js";
+import {
+  isNative, nativeLiveRun, nativeEndLiveRun, nativeRunNotification,
+  nativeEnsurePermission, nativeCheckPermission,
+} from "./native.js";
 
 const KEY = "reminder";
 
@@ -34,17 +37,50 @@ const NUDGES = [
 ];
 export const pickNudge = () => NUDGES[Math.floor(Math.random() * NUDGES.length)];
 
-export async function loadReminder() { return { ...DEFAULT_REMINDER, ...((await idbGet(KEY)) || {}) }; }
+// The live-run notice consults these settings four times a second for the whole
+// run, so the read is cached for a moment. The TTL is short enough that the
+// once-a-minute foreground scheduler still sees the service worker's writes
+// (it records `lastFired` from its own context), and writes here refresh it
+// immediately.
+let cache = null, cacheAt = 0;
+const CACHE_MS = 5000;
+
+const readFresh = async () => ({ ...DEFAULT_REMINDER, ...((await idbGet(KEY)) || {}) });
+
+export async function loadReminder() {
+  const now = Date.now();
+  if (cache && now - cacheAt < CACHE_MS) return cache;
+  cache = await readFresh();
+  cacheAt = now;
+  return cache;
+}
 export async function saveReminder(patch) {
-  const next = { ...(await loadReminder()), ...patch };
+  // Merges onto what is actually stored, never onto the cache: the service
+  // worker writes `lastFired` from its own context and must not be clobbered.
+  const next = { ...(await readFresh()), ...patch };
   await idbSet(KEY, next);
+  cache = next;
+  cacheAt = Date.now();
   return next;
 }
 
 export function notificationsSupported() {
   return typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator;
 }
+// Web-only, and only meaningful on the web: the Android WebView has no
+// `Notification` object, so in the native app this always reads "denied". Use
+// permissionState() anywhere the answer has to be right on both platforms.
 export function permission() { return notificationsSupported() ? Notification.permission : "denied"; }
+
+// The honest, cross-platform permission state: "granted" | "denied" | "default".
+// Native answers come from Android via the LocalNotifications plugin.
+export async function permissionState() {
+  if (isNative()) {
+    const s = await nativeCheckPermission();
+    return s === "prompt" ? "default" : s;
+  }
+  return permission();
+}
 export async function requestPermission() {
   if (!notificationsSupported()) return "denied";
   try { return await Notification.requestPermission(); } catch { return "denied"; }
@@ -68,9 +104,12 @@ export async function ensureNotificationPermission({ timeoutMs = 15000 } = {}) {
     if (Notification.permission === "denied") return false;   // only the user can undo this
     return (await requestPermission()) === "granted";
   };
+  // The timeout arm must consult the same source of truth as the ask arm, or a
+  // native grant that took longer than the timeout is reported as a refusal.
+  const fallback = async () => (isNative() ? (await nativeCheckPermission()) === "granted" : permission() === "granted");
   return Promise.race([
     ask().catch(() => false),
-    new Promise((resolve) => setTimeout(() => resolve(permission() === "granted"), timeoutMs)),
+    new Promise((resolve) => setTimeout(() => resolve(fallback()), timeoutMs)),
   ]);
 }
 
@@ -138,7 +177,11 @@ export async function syncMessage(message, restToday = false) {
   if (r.message !== message || r.restToday !== restToday) await saveReminder({ message, restToday });
 }
 
+// Web only. The native app schedules a real repeating Android alarm, which
+// fires whether or not Stride is open — and `permission()` cannot be trusted in
+// the WebView anyway, so this would never fire there.
 export function startForegroundScheduler(getMessage) {
+  if (isNative()) return null;
   const tick = async () => {
     const r = await loadReminder();
     if (!r.enabled || permission() !== "granted") return;
@@ -196,8 +239,11 @@ export async function updateLiveRun({ km = 0, elapsedSec = 0, paceSec = 0, pause
   });
 }
 
+// Always clears, even when this module never posted the notice itself: the
+// sticky run notification outlives a reload or an app restart, and `liveOn` is
+// module state that does not. Bailing out on it left an "ongoing" notification
+// pinned in the shade with no way to dismiss it.
 export async function endLiveRun() {
-  if (!liveOn) return;
   liveOn = false;
   liveAt = 0;
   if (isNative()) { await nativeEndLiveRun(); return; }

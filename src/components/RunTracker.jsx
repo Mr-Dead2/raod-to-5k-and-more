@@ -249,13 +249,15 @@ export function RunTracker({ onClose, onSave, days, defaultKey, targetRoute }) {
   const beginRun = async () => {
     haptic(15); primeAudio();
     hrAgg.current = { sum: 0, n: 0, max: 0 };
-    await ensureLocationPermission();
-    // Ask for notification permission here rather than never: the in-run alerts
-    // are switched on by default, and a browser only prompts when asked. NOT
-    // awaited — a prompt the runner ignores would otherwise hang the countdown
-    // and the run would never start.
+    // Nothing on this path may be awaited. Every one of these can raise a system
+    // permission dialog, and a dialog the runner ignores (or swipes away) leaves
+    // its promise pending for the life of the app — awaiting one meant tapping
+    // Start and watching nothing happen. Ask for all three, start the countdown
+    // regardless: the location watcher asks again itself when it starts, and the
+    // alerts simply stay quiet if the answer never comes.
+    ensureLocationPermission().catch(() => {});
     primeRunNotifications().catch(() => {});
-    if (cadenceOn) await ensureMotionPermission();
+    if (cadenceOn) ensureMotionPermission().catch(() => {});
     let n = 3; setCount(n); beep(660, 150);
     clearInterval(countIv.current);
     countIv.current = setInterval(() => {
