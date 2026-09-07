@@ -411,10 +411,21 @@ front — the other headline reason to go native.
   deliberately tiny** — availability, permission, and "workouts between these two
   instants, with each session's own aggregated totals". Health Connect's client
   library is API 26+, which is why `minSdkVersion` is 26.
-  Every judgement lives in `src/health.js`, in pure functions: `isRunLike()`
-  (only running/treadmill/walking/hiking — importing a bike ride would wreck
-  every pace figure and race prediction), `workoutToEntry()` (metrics the watch
-  did not record stay *absent* rather than becoming zero), `chooseDayKey()` (the
+  Every judgement lives in `src/health.js`, in pure functions. `EXERCISE_TYPES`
+  tags each Health Connect type with a `kind` — `"run"` (running, treadmill),
+  `"walk"` (walking, hiking) or `null` (never imported; a bike ride logged as
+  "24 km" would wreck every pace figure and race prediction). **Walks are off by
+  default** (`importWalks` setting, toggled in the import card): Samsung Health
+  records walking *by itself*, so importing them means importing every trip to
+  the shops as a training session. Even when the user opts in, an imported walk
+  carries `activity: "walk"` on its log entry and App's `isRun()` keeps it out of
+  everything that is running-only — `bestPaceSec`, `avgPaceSec`, `runsLogged`,
+  `stitchlessRuns`, `paceTrend`, the `raceRef` a prediction is built from, and
+  above all `maxKm`, which drives race readiness (a 12 km amble must never become
+  the "longest run"). It still counts towards `kmLogged`, `minTotal` and streaks,
+  because it is a session that happened. `buildSummary` passes `activity` to the
+  coach for the same reason. Then `workoutToEntry()` (metrics the watch did not
+  record stay *absent* rather than becoming zero), `chooseDayKey()` (the
   calendar day the run happened when `startDate` is set, else the first
   unfinished day), and `planImport()`, which returns `{ ready, skipped }` with a
   reason on every skip — already imported (the Health Connect record id is kept

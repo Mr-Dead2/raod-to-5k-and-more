@@ -158,6 +158,9 @@ export default function App() {
   // Health Connect import (runs recorded on a watch, via Samsung Health etc.)
   const [hc, setHc] = useState({ availability: "NotSupported", granted: false });
   const [hcScan, setHcScan] = useState(null);   // { ready, skipped } after a look
+  // Off by default: Samsung Health records walking on its own, so importing
+  // walks means importing every trip to the shops as a training session.
+  const [importWalks, setImportWalks] = useState(false);
   const [hcBusy, setHcBusy] = useState(false);
 
   // stopwatch
@@ -175,6 +178,7 @@ export default function App() {
     setCoachModel(s.coachModel || DEFAULT_MODEL);
     setGoalRace(s.goalRace || DEFAULT_GOAL_RACE);
     setGoalDate(s.goalDate || "");
+    setImportWalks(!!s.importWalks);
     if (Array.isArray(s.coachChat)) setCoachChat(s.coachChat);
     else if (s.coachLast?.text) setCoachChat([{ role: "assistant", content: s.coachLast.text }]); // migrate old single reply
     setLoaded(true);
@@ -317,7 +321,7 @@ export default function App() {
     setHcBusy(true);
     setHcScan(null);
     const workouts = await readWorkouts(30);
-    setHcScan(planImport(workouts, { flat: FLAT, log, startDate }));
+    setHcScan(planImport(workouts, { flat: FLAT, log, startDate, includeWalks: importWalks }));
     setHcBusy(false);
   };
 
@@ -331,7 +335,9 @@ export default function App() {
     haptic([12, 30, 12]);
     confetti({ count: 70 });
     const n = hcScan.ready.length;
-    setToast({ icon: "⌚", title: `Imported ${n} run${n === 1 ? "" : "s"}`, label: "HEALTH CONNECT" });
+    const walks = hcScan.ready.filter((r) => r.kind === "walk").length;
+    const noun = walks === 0 ? "run" : walks === n ? "walk" : "session";
+    setToast({ icon: "⌚", title: `Imported ${n} ${noun}${n === 1 ? "" : "s"}`, label: "HEALTH CONNECT" });
     setHcScan(null);
     setTab("history");
   };
@@ -345,6 +351,16 @@ export default function App() {
     setSettingsOpen(true);
     // After the section has expanded and painted.
     setTimeout(() => notifCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+  };
+
+  const toggleImportWalks = () => {
+    const next = !importWalks;
+    setImportWalks(next);
+    saveSettings({ ...loadSettings(), importWalks: next });
+    haptic(6);
+    // Re-sort what is already on screen rather than making them scan again.
+    setHcScan((prev) => prev && planImport(prev.ready.concat(prev.skipped).map((x) => x.w),
+      { flat: FLAT, log, startDate, includeWalks: next }));
   };
 
   const setAccentTheme = (id) => {
@@ -551,6 +567,12 @@ export default function App() {
     } catch { /* user cancelled */ }
   };
 
+  // An imported walk is a session, but it is not a run. Pace, longest run and
+  // race predictions must ignore it: Samsung Health logs walks by itself, and a
+  // long amble counted as a run would set the "longest run" that race readiness
+  // is measured against, and drag every pace figure with it.
+  const isRun = (e) => e && e.activity !== "walk";
+
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
     let timeSum = 0, paceKmSum = 0, minTotal = 0, earlyRuns = 0, lateRuns = 0;
@@ -559,14 +581,18 @@ export default function App() {
       const e = log[f.key];
       if (!e) return;
       if (e.done) done++;
+      const running = isRun(e);
       const k = parseFloat(e.km);
-      if (!isNaN(k)) { kmLogged += k; if (k > 0) { runsLogged++; maxKm = Math.max(maxKm, k); if (!e.stitch) stitchlessRuns++; } }
+      if (!isNaN(k)) {
+        kmLogged += k;
+        if (k > 0 && running) { runsLogged++; maxKm = Math.max(maxKm, k); if (!e.stitch) stitchlessRuns++; }
+      }
       if (e.stitch) stitches++;
-      const ps = paceSec(e.min, e.km);
+      const ps = running ? paceSec(e.min, e.km) : 0;
       if (ps && (bestPaceSec === 0 || ps < bestPaceSec)) bestPaceSec = ps;
       const mm = parseFloat(e.min);
       if (mm > 0) minTotal += mm;
-      if (mm > 0 && k > 0) { timeSum += mm * 60; paceKmSum += k; }
+      if (mm > 0 && k > 0 && running) { timeSum += mm * 60; paceKmSum += k; }
       if (e.done && e.date) {
         const h = new Date(e.date).getHours();
         if (h < 8) earlyRuns++; else if (h >= 21) lateRuns++;
@@ -620,7 +646,7 @@ export default function App() {
   }, [log, planVersion]);
 
   const paceTrend = useMemo(() => history
-    .filter((h) => paceSec(h.e.min, h.e.km) > 0)
+    .filter((h) => isRun(h.e) && paceSec(h.e.min, h.e.km) > 0)
     .slice().sort((a, b) => (a.e.date || "").localeCompare(b.e.date || ""))
     .map((h) => ({ sec: paceSec(h.e.min, h.e.km) })), [history]);
 
@@ -673,7 +699,7 @@ export default function App() {
 
   // Race goal: the best logged run becomes the reference performance that every
   // equivalent finish time is extrapolated from.
-  const raceRef = useMemo(() => bestReference(history.map((h) => ({
+  const raceRef = useMemo(() => bestReference(history.filter((h) => isRun(h.e)).map((h) => ({
     km: parseFloat(h.e.km),
     sec: h.e.durMs > 0 ? h.e.durMs / 1000 : parseFloat(h.e.min) * 60,
   }))), [history]);
@@ -1239,6 +1265,23 @@ export default function App() {
                       {hcBusy ? "Looking…" : "Look for new runs"}
                     </button>
 
+                    {/* Samsung Health logs walking with no input from the user,
+                        so this stays off unless it is asked for. Even when on,
+                        walks never count towards pace or longest run. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0 2px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Also import walks</div>
+                        <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, lineHeight: 1.45 }}>
+                          Your watch records walks by itself, so this is off. Walks that do come in are
+                          logged as walks — never counted towards pace, longest run or race predictions.
+                        </div>
+                      </div>
+                      <button onClick={toggleImportWalks} className="sw"
+                        style={{ background: importWalks ? C.accent : C.line, flexShrink: 0 }} aria-label="Toggle walk import">
+                        <b style={{ left: importWalks ? 22 : 3 }} />
+                      </button>
+                    </div>
+
                     {hcScan && hcScan.ready.length === 0 && (
                       <div className="rise" style={{ fontSize: 12, color: C.dim, marginTop: 12, lineHeight: 1.6 }}>
                         Nothing new to import.
@@ -1256,6 +1299,7 @@ export default function App() {
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r.label}</div>
                               <div style={{ fontSize: 11, color: C.dim2, marginTop: 2 }}>
+                                {r.kind === "walk" ? "Walk · " : ""}
                                 {r.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} → {r.key}
                               </div>
                             </div>
@@ -1267,9 +1311,15 @@ export default function App() {
                             </div>
                           </div>
                         ))}
+                        {/* "5 runs" would be a lie when three of them are walks. */}
                         <button onClick={applyHealthImport} className="tap cta"
                           style={{ width: "100%", marginTop: 12, borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
-                          Import {hcScan.ready.length} run{hcScan.ready.length === 1 ? "" : "s"}
+                          {(() => {
+                            const n = hcScan.ready.length;
+                            const walks = hcScan.ready.filter((r) => r.kind === "walk").length;
+                            const noun = walks === 0 ? "run" : walks === n ? "walk" : "session";
+                            return `Import ${n} ${noun}${n === 1 ? "" : "s"}`;
+                          })()}
                         </button>
                       </div>
                     )}
@@ -1542,7 +1592,11 @@ export default function App() {
                           <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
                           {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH</div>}
                           {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
-                          {h.e.imported && !h.e.tracked && <div style={{ fontSize: 9, color: C.dim, fontWeight: 800, letterSpacing: 1 }}>● IMPORTED</div>}
+                          {h.e.imported && !h.e.tracked && (
+                            <div style={{ fontSize: 9, color: C.dim, fontWeight: 800, letterSpacing: 1 }}>
+                              ● {h.e.activity === "walk" ? "WALK · " : ""}IMPORTED
+                            </div>
+                          )}
                           {parseFloat(h.e.km) > 0 && (
                             <button onClick={() => { haptic(8); shareRunCard({ km: h.e.km, min: h.e.min, durMs: h.e.durMs, route: h.e.route, elev: h.e.elev, kcal: h.e.kcal, runKm: h.e.runKm, walkKm: h.e.walkKm, date: h.e.date }); }}
                               className="chip" style={{ padding: "4px 10px", fontSize: 10, marginTop: 5 }}>

@@ -29,6 +29,9 @@ export function buildSummary({ stats, weekly, history, goal, race }) {
         km: Number(km.toFixed(2)),
         min: min ? Number(min.toFixed(1)) : null,
         pace: p ? pace(p) : null,
+        // Walks imported from a watch are sessions, not runs. Saying so stops
+        // the coach averaging a 15:00/km stroll into "your pace has collapsed".
+        activity: h.e.activity === "walk" ? "walk" : "run",
         feel: h.e.feel || null, // 1 (rough) .. 5 (great)
         feedback: h.e.cal || null, // runner flagged this session: "easy" | "ok" | "hard"
         stitch: !!h.e.stitch,
