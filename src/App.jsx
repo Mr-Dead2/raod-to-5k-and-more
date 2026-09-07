@@ -12,6 +12,7 @@ import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
+import { WeatherStrip, useWeather } from "./components/Weather.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
@@ -213,6 +214,7 @@ export default function App() {
   const [shareSpec, setShareSpec] = useState(null); // card handed to the share sheet
   const [statsView, setStatsView] = useState("overview"); // overview | goal | charts | awards | settings
   const [scrolled, setScrolled] = useState(false);
+  const wx = useWeather({ enabled: tab === "plan" });
   const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
   // reminders + per-type notification switches
@@ -2164,6 +2166,10 @@ export default function App() {
                 <span style={{ fontSize: 11.5, fontWeight: 800, color: C.warn, flexShrink: 0 }}>Fix →</span>
               </button>
             )}
+
+            {/* Conditions first: what to wear and whether to wait are decided
+                before the session is even read. */}
+            <WeatherStrip weather={wx.weather} onRefresh={wx.refresh} />
 
             {/* Today / next-up hero — the screen's centre of gravity */}
             {hero ? (

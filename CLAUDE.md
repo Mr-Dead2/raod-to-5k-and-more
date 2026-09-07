@@ -321,6 +321,22 @@ front — the other headline reason to go native.
   80% of it beyond). Settings keys `goalRace` and `goalDate`; the Stats tab has
   the goal picker and the prediction board, and the Plan tab shows a countdown
   strip when a race date is set. Pure functions with no React — keep it that way.
+- **Weather (`src/weather.js` + `src/components/Weather.jsx`).** Open-Meteo:
+  free, no API key, no account, no backend — the only kind of service that fits
+  this app. The point is not a weather widget but the two decisions made before
+  going out, so the module's real output is `runAdvice()`: `dressFor()` (driven
+  by *apparent* temperature, because 6°C in a 35 km/h wind is not 6°C),
+  `runWarning()` (silent unless conditions genuinely change the session, worst
+  thing first) and `bestWindow()` (a later hour, only when it is clearly
+  better). Thresholds live in Celsius and Fahrenheit readings are converted
+  back into that one scale rather than duplicated. Readings are asked for in
+  the runner's own units, cached for 30 minutes, and refetched once they have
+  moved ~5 km.
+  **Weather never blocks or prompts.** `quietPosition()` asks for a fix only
+  where the Permissions API already says "granted", so the strip can never
+  raise a location dialog over someone's plan; every failure path returns null
+  and the strip simply does not render. Coordinates are rounded to 2 dp (~1 km)
+  before they leave the device.
 - **Distance units (`src/units.js`).** Kilometres are canonical and stay that
   way: every stored value — a log entry's `km`, a plan day's `km`, splits, GPS
   distance, race distances — is metric on disk and in every calculation. This

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { C, tint } from "../data.js";
 import { LiveMap } from "./LiveMap.jsx";
+import { WeatherStrip, useWeather } from "./Weather.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
 import { ensureLocationPermission, isNative } from "../native.js";
@@ -132,6 +133,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
 
   // body weight for the calorie estimate, remembered between runs
   const [weightKg, setWeightKg] = useState(() => loadSettings().weightKg || 70);
+  const wx = useWeather({ enabled: true });
   const setWeight = (fn) => setWeightKg((v) => {
     const n = Math.max(30, typeof fn === "function" ? fn(v) : fn);
     saveSettings({ ...loadSettings(), weightKg: n });
@@ -350,6 +352,11 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
               ? "Head outside with a clear view of the sky, then press start. You can turn the screen off or switch apps — tracking keeps running in the background (you'll see a notification while it records)."
               : "Head outside with a clear view of the sky, then press start. Keep this screen open while you run — the browser pauses GPS when the screen is off, so the app holds it awake for you."}
           </div>
+          {/* Conditions here too: this is the last screen before the door. */}
+          <div style={{ textAlign: "left", maxWidth: 360, width: "100%", margin: "0 auto" }}>
+            <WeatherStrip weather={wx.weather} compact />
+          </div>
+
           <div style={{ display: "flex", gap: 8, justifyContent: "center", margin: "2px auto 0", flexWrap: "wrap" }}>
             <Toggle on={audioOn} label="Voice cues" onClick={() => { setAudioOn((v) => !v); haptic(6); }} />
             <Toggle on={autoPauseOn} label="Auto-pause" onClick={() => { setAutoPauseOn((v) => !v); haptic(6); }} />
