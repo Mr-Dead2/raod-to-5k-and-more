@@ -133,11 +133,21 @@ front — the other headline reason to go native.
   `tint(hex, alpha)` turns any token into an `rgba()` string — use it instead of
   appending hex alpha suffixes.
 - **`src/App.jsx` — one stateful component, four tabs (`plan | stats | coach |
-  history`).** The AI coach has its own tab (chat + plan tools + key setup) to keep
-  Stats scannable; Stats leads with numbers/PBs/charts/achievements and tucks
-  preferences (appearance, reminders, backup, stopwatch) behind a collapsed
-  "Settings & tools" section (`settingsOpen`). All user progress lives in a single
-  `log` object keyed by the
+  history`).** The shell is app chrome, not page content: a **sticky, blurred app
+  bar** (mark, wordmark, schedule eyebrow, a share button and a compact progress
+  ring) that is transparent at rest and gains its glass background once anything
+  scrolls under it (`scrolled`, a passive scroll listener; the `.appbar.stuck`
+  class). Each tab then opens with the same `<Screen title sub action />` header,
+  and changing tab scrolls to the top so a tab reads as a screen rather than a
+  section of one very long page. The AI coach has its own tab (chat + plan tools +
+  key setup); **Stats is split into five sub-screens by a `<Segmented />` control**
+  (`statsView`: overview | goal | charts | awards | settings) rather than one
+  mega-scroll — Overview is the headline distance card, tiles and PBs; Goal is the
+  race picker, prediction board and readiness; Charts holds the start date, streak
+  grid and the three charts; Awards is the badge grid (tap an earned badge to
+  share it); Setup is appearance, notifications, Health Connect import, backup and
+  the stopwatch. `goToNotifications()` jumps straight to the Setup segment.
+  All user progress lives in a single `log` object keyed by the
   `w{n}d{i}` keys; each entry is a partial `{ done, km, min, stitch, note, feel,
   date }` (`feel` is a 1–5 effort rating shown via the `FEELS` emoji scale).
   `update(key, patch)` shallow-merges and persists; it stamps `date` the
@@ -310,8 +320,10 @@ front — the other headline reason to go native.
 - **Bottom navigation (`src/components/BottomNav.jsx`)** is a floating glass dock
   (Plan/Stats/Coach/History) with inline SVG icons and an accent pill that
   *slides* between tabs via a `translateX` on one absolutely-positioned span —
-  the active state is a movement, not a swap. Page content reserves bottom
-  padding for it and the safe-area inset.
+  the active state is a movement, not a swap. The active icon also thickens and
+  picks up an accent glow. A short gradient fade sits behind the dock so content
+  scrolls out of sight rather than being sliced off by its edge; page content
+  reserves bottom padding for it and the safe-area inset.
 - **Live GPS run tracking.** `src/tracker.js` exposes a `useRunTracker()` hook
   over `src/geo.js`'s `startLocationWatch()` (web: `geolocation.watchPosition`;
   native: the background-geolocation foreground service, so tracking survives
@@ -422,10 +434,39 @@ front — the other headline reason to go native.
   minutes), too short, or no free day left. The batch is applied through one
   `persist()` call, not a loop of `update()`s, which would each merge onto a
   stale `log` and leave only the last run. History badges imported entries.
+- **Share cards (`src/share.js` + `src/components/ShareSheet.jsx`).** Anything
+  worth bragging about becomes an image. A card is described as a `spec`
+  — `{ kind, data, format, style, options }` — and `renderCard(spec)` draws it on
+  a canvas at 2× (`square` 1080×1080, `story` 1080×1920, `wide` 1280×670). Four
+  `kind`s: `run` (route, hero distance, time/pace/kcal, a per-km splits chart,
+  metric chips, note), `progress` (completion ring, totals, weekly bars),
+  `achievement` (badge) and `goal` (predicted finish + readiness). Runs also have
+  three `style`s — `bold`, `route` (map-forward) and `minimal`. Everything reads
+  the live `C` tokens, so a card always matches the user's accent.
+  **The body renderers measure before they draw.** Blocks are built with their
+  heights, the map (or the weekly chart) absorbs whatever slack is left, and when
+  the stack still doesn't fit, space is conceded in a fixed order — tighten the
+  gap, shrink the map, drop the note, drop the chip row, shrink the splits, shrink
+  the hero, drop the splits — so a card never runs off its own bottom edge and
+  through the footer. With no map at all the hero number grows into the space
+  instead (clamped so the number plus its "km" still fits the width), because a
+  bare run on a 9:16 story otherwise floats in an empty frame.
+  `ShareSheet` is the picker: it renders the **real card** as the preview (same
+  `renderCard` output that gets shared, generation-guarded so a fast tap through
+  the formats can't let a slow earlier render overwrite a newer one), offers the
+  format/style chips plus content toggles (route / splits / extras / date), and
+  four actions — Share (native share sheet via `@capacitor/share` + Filesystem
+  natively, `navigator.share` with a File on the web, download as the fallback),
+  Save, Copy image (`ClipboardItem`, unsupported in some browsers) and Copy text
+  (`cardText(spec)`, the plain-text form of every card). A cancelled share sheet
+  is a normal outcome, not an error. Entry points: the app bar and every screen
+  header (progress card), History per run, RunTracker's finish screen (via its
+  `onShare` prop — the tracker hands the run up rather than firing a card blind),
+  the Awards grid and the Goal segment.
 - **Backup / share / goal.** Stats has a Data card: JSON export (Blob download
   on the web; Filesystem + share sheet natively, payload `version: 2` with the
   full settings object), import, and `navigator.share` progress text (clipboard
-  fallback). Import **merges** per session key (backup wins per key, nothing is
+  fallback for the backup file). Import **merges** per session key (backup wins per key, nothing is
   wiped) and accepts v2/v1 payloads or a raw `log` object; `storage.js` also
   migrates legacy localStorage keys (`run5k:v1`, `run5k`) into `run5k:v2` on
   load — keep both paths working when changing stored shapes.
@@ -439,7 +480,11 @@ front — the other headline reason to go native.
 - All styling is inline `style={{}}` objects plus one `<style>` block in
   `App.jsx` for fonts, keyframes and utility classes (`.disp`, `.num`, `.row`,
   `.card`, `.cta`, `.chip`, `.chip.on`, `.gtext`, `.lab`, `.bar`, `.inp`, `.sw`,
-  `.glow`, `.rise`, `.stagger`, `.aurora`). `src/app.css` is only the base layer
+  `.tick`, `.seg`, `.hscroll`, `.appbar`, `.glow`, `.rise`, `.stagger`,
+  `.aurora`). **Any control smaller than 42px needs an explicit `min-height`**:
+  `app.css` sets `button { min-height: 42px }` under 700px for touch targets, and
+  without the override that rule stretched the round `.tick` and the `.sw` switch
+  into ovals. `src/app.css` is only the base layer
   (document ground, fallback font, input defaults); the `App.jsx` block is
   injected later in the document, so it wins on ties. No framework.
 - Fonts: `Space Grotesk` (display headings/numbers via `.disp`/`.num`) and

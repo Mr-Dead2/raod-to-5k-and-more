@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { shareRunCard } from "./share.js";
+import { ShareSheet } from "./components/ShareSheet.jsx";
 import { RouteReplay } from "./components/RouteReplay.jsx";
 import { RouteMaker } from "./components/RouteMaker.jsx";
 import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint } from "./data.js";
@@ -111,7 +111,6 @@ export default function App() {
   const [open, setOpen] = useState(null);
   const [tab, setTab] = useState("plan"); // plan | stats | history
   const [tipsOpen, setTipsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const notifCardRef = useRef(null);
   const [startDate, setStartDate] = useState("");
   const [toast, setToast] = useState(null);
@@ -121,6 +120,9 @@ export default function App() {
   const [openWeeks, setOpenWeeks] = useState({}); // completed weeks expanded by tap
   const [replayRun, setReplayRun] = useState(null); // run object being replayed
   const [routeMakerOpen, setRouteMakerOpen] = useState(false);
+  const [shareSpec, setShareSpec] = useState(null); // card handed to the share sheet
+  const [statsView, setStatsView] = useState("overview"); // overview | goal | charts | awards | settings
+  const [scrolled, setScrolled] = useState(false);
   const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
   // reminders + per-type notification switches
@@ -206,6 +208,20 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", h);
     return () => window.removeEventListener("beforeinstallprompt", h);
   }, []);
+
+  // The app bar is transparent over the top of the page and gains its glass
+  // background once anything has scrolled under it — the cue that tells you a
+  // bar is chrome and not just the first row of content.
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 6);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Moving between tabs should feel like opening a screen, not scrolling a
+  // very long page: start each one at the top.
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [tab, statsView]);
 
   // Coming back from Android's notification settings should be reflected here
   // straight away, rather than leaving a "blocked" banner over a permission the
@@ -342,7 +358,7 @@ export default function App() {
   const goToNotifications = () => {
     haptic(8);
     setTab("stats");
-    setSettingsOpen(true);
+    setStatsView("settings");
     // After the section has expanded and painted.
     setTimeout(() => notifCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
   };
@@ -542,14 +558,63 @@ export default function App() {
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
     } catch { setToast({ icon: "⚠️", title: "Couldn't read that file", label: "BACKUP" }); }
   };
-  const shareProgress = async () => {
-    haptic(8);
-    const text = `Stride — ${stats.done}/${TOTAL} sessions done, ${stats.kmLogged.toFixed(1)} km logged, best streak ${stats.best} days. ${pct}% of the plan complete! 🏃`;
-    try {
-      if (navigator.share) await navigator.share({ title: "Stride", text });
-      else { await navigator.clipboard.writeText(text); setToast({ icon: "📋", title: "Copied to clipboard", label: "SHARE" }); }
-    } catch { /* user cancelled */ }
-  };
+  // --- sharing --------------------------------------------------------------
+  // Every shareable thing is described as a card `spec` and handed to the
+  // sheet, which owns the format/style picking, the preview and the export.
+  // The spec object goes into state so its identity is stable — the sheet
+  // re-renders the preview whenever the spec changes, and a fresh object on
+  // every App render would put it in a loop.
+  const openShare = (spec) => { haptic(10); setShareSpec(spec); };
+
+  const runShareSpec = (item) => ({
+    kind: "run",
+    data: {
+      title: item.title || null,
+      km: item.e.km, min: item.e.min, durMs: item.e.durMs,
+      route: item.e.route, splits: item.e.splits,
+      elev: item.e.elev, kcal: item.e.kcal,
+      runKm: item.e.runKm, walkKm: item.e.walkKm,
+      hrAvg: item.e.hrAvg, cadence: item.e.cadence,
+      note: item.e.note, date: item.e.date,
+    },
+  });
+
+  const progressShareSpec = () => ({
+    kind: "progress",
+    data: {
+      headline: goal ? `Road to my ${goal.name}` : `${WEEKS.length}-week training block`,
+      pct, done: stats.done, total: TOTAL,
+      km: stats.kmLogged, runs: stats.runsLogged, streak: stats.best,
+      pace: fmtPace(stats.avgPaceSec),
+      longest: stats.maxKm,
+      time: stats.minTotal ? fmtMin(stats.minTotal) : null,
+      weekly: weekly.map((w) => ({ week: w.label, value: w.value, target: w.target })),
+      date: Date.now(),
+    },
+  });
+
+  const achievementShareSpec = (a) => ({
+    kind: "achievement",
+    data: { icon: a.icon, title: a.title, desc: a.desc, count: unlocked.size, of: ACHIEVEMENTS.length, date: Date.now() },
+  });
+
+  const goalShareSpec = () => ({
+    kind: "goal",
+    data: {
+      raceName: goal ? goal.name : "Next race",
+      time: goalPrediction ? fmtDuration(goalPrediction.sec) : "—",
+      sub: goalPrediction && raceRef
+        ? `predicted from ${raceRef.km.toFixed(1)} km in ${fmtDuration(raceRef.sec)}`
+        : "log a timed run for a prediction",
+      distance: goal ? `${goal.km.toFixed(goal.km % 1 ? 1 : 0)} km` : "—",
+      days: goalDate && goalDays != null && goalDays >= 0 ? goalDays : null,
+      readiness: goalReady,
+      note: goalReady >= 100
+        ? "Longest run already covers the distance."
+        : goal ? `Longest run so far ${stats.maxKm || 0} km.` : "",
+      date: Date.now(),
+    },
+  });
 
   const stats = useMemo(() => {
     let kmLogged = 0, done = 0, stitches = 0, runsLogged = 0, maxKm = 0, bestPaceSec = 0, stitchlessRuns = 0;
@@ -734,7 +799,7 @@ export default function App() {
 
   const fmt = (ms) => { const s = Math.floor(ms / 1000), m = Math.floor(s / 60); return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
 
-  const R = 46, CIRC = 2 * Math.PI * R;
+  const R = 17, CIRC = 2 * Math.PI * R; // app-bar progress ring
 
   // header schedule eyebrow / countdown
   let eyebrow = `${WEEKS.length}-WEEK BLOCK`, countdown = null;
@@ -750,13 +815,6 @@ export default function App() {
 
   // `hero` renders the number in the accent gradient — reserved for the one
   // figure per row that matters most.
-  const Stat = ({ label, value, sub, hero, color, delay = 0 }) => (
-    <div className="card stagger" style={{ animationDelay: `${delay}s`, flex: 1, borderRadius: 18, padding: "15px 15px 14px", overflow: "hidden" }}>
-      <div className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 30, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 9.5, letterSpacing: 1.5, color: C.dim, marginTop: 8, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
-      {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
-    </div>
-  );
   const Card = ({ children, style, className = "", innerRef }) => (
     <div ref={innerRef} className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
   );
@@ -769,6 +827,49 @@ export default function App() {
   const Bar = ({ pct }) => (
     <div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
   );
+  // Every tab opens with the same shape: a big title, a line of context, and
+  // an optional action on the right. That repetition is most of what makes a
+  // set of screens read as one app.
+  const Screen = ({ title, sub, action }) => (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 16 }}>
+      <div style={{ minWidth: 0 }}>
+        <h2 className="disp" style={{ fontSize: 27, fontWeight: 700, margin: 0, letterSpacing: -0.7, lineHeight: 1.05 }}>{title}</h2>
+        {sub && <div style={{ fontSize: 12.5, color: C.dim, marginTop: 5, fontWeight: 500 }}>{sub}</div>}
+      </div>
+      {action && <div style={{ marginLeft: "auto", flexShrink: 0 }}>{action}</div>}
+    </div>
+  );
+  // Segmented control. The pill is one element that translates, so switching
+  // sub-screens is a movement rather than two things repainting.
+  const Segmented = ({ items, value, onChange }) => {
+    const i = Math.max(0, items.findIndex((x) => x.id === value));
+    return (
+      <div className="seg" style={{ marginBottom: 16 }}>
+        <i style={{ width: `calc((100% - 8px) / ${items.length})`, transform: `translateX(${i * 100}%)` }} />
+        {items.map((x) => (
+          <button key={x.id} className={value === x.id ? "on" : ""}
+            onClick={() => { onChange(x.id); haptic(5); }}>{x.label}</button>
+        ))}
+      </div>
+    );
+  };
+  // A compact figure tile: one number, one label, optional footnote.
+  const Tile = ({ label, value, unit, sub, hero, color, delay = 0 }) => (
+    <div className="card stagger" style={{ animationDelay: `${delay}s`, flex: 1, minWidth: 0, borderRadius: 18, padding: "14px 14px 13px", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+        <span className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 28, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</span>
+        {unit && <span className="num" style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>{unit}</span>}
+      </div>
+      <div style={{ fontSize: 9.5, letterSpacing: 1.4, color: C.dim, marginTop: 9, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
+  const ShareBtn = ({ spec, label: lbl = "Share", style }) => (
+    <button onClick={() => openShare(spec)} className="chip tap"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.surface2, color: C.text, ...style }}>
+      <Icon name="share" size={13} /> {lbl}
+    </button>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Manrope', system-ui, sans-serif" }}>
@@ -777,6 +878,7 @@ export default function App() {
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         button { font-family: inherit; }
         html, body { background:${C.bg}; }
+        body { overscroll-behavior-y: none; }
         input { font-family: 'Manrope', sans-serif; }
         .disp { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.015em; }
         .num  { font-family: 'Space Grotesk', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -793,6 +895,22 @@ export default function App() {
         @keyframes drift1 { from { transform:translate3d(0,0,0) scale(1) } to { transform:translate3d(6vw,5vh,0) scale(1.14) } }
         @keyframes drift2 { from { transform:translate3d(0,0,0) scale(1.08) } to { transform:translate3d(-7vw,7vh,0) scale(.94) } }
 
+        /* --- app bar: chrome, not content. Transparent at rest, glass once
+              anything scrolls beneath it. --- */
+        .appbar {
+          position:sticky; top:0; z-index:60; margin:0 -16px 14px; padding:0 16px;
+          padding-top:max(10px, env(safe-area-inset-top));
+          transition:background .25s ease, border-color .25s ease, box-shadow .25s ease;
+          border-bottom:1px solid transparent;
+        }
+        .appbar.stuck {
+          background:rgba(8,9,13,.93);
+          backdrop-filter:blur(20px) saturate(150%);
+          -webkit-backdrop-filter:blur(20px) saturate(150%);
+          border-bottom-color:${C.line};
+          box-shadow:0 12px 26px -22px rgba(0,0,0,1);
+        }
+
         /* --- surfaces: lit from the top-left, hairline highlight on the rim --- */
         .card {
           position:relative;
@@ -802,6 +920,7 @@ export default function App() {
         }
         .card.glow { border-color:${tint(C.accent, .45)}; box-shadow:${C.glow}, inset 0 1px 0 ${tint(C.accent, .16)}; }
         .card.accented { background:linear-gradient(150deg, ${tint(C.accent, .16)} 0%, ${tint(C.accent2, .07)} 46%, ${C.bgSoft} 100%); border-color:${tint(C.accent, .3)}; }
+        .card.flat { box-shadow:none; background:${tint(C.text, .035)}; }
 
         /* --- primary action: the accent gradient, glowing --- */
         .cta { border:none !important; background:${C.grad} !important; color:${C.bg} !important; box-shadow:${C.glow}; }
@@ -819,12 +938,35 @@ export default function App() {
 
         .lab { font-size:10px; letter-spacing:2px; font-weight:800; color:${C.dim}; text-transform:uppercase; }
 
+        /* --- segmented control: one track, a pill that slides between slots.
+              This is what breaks a long screen into real sub-screens. --- */
+        .seg { position:relative; display:flex; padding:4px; border-radius:15px;
+               background:${C.bgSoft}; border:1px solid ${C.line}; overflow:hidden; }
+        .seg > i { position:absolute; top:4px; bottom:4px; left:4px; border-radius:11px;
+                   background:linear-gradient(150deg,${tint(C.accent, .22)},${tint(C.accent2, .1)});
+                   border:1px solid ${tint(C.accent, .4)};
+                   transition:transform .3s cubic-bezier(.3,1.2,.5,1); }
+        .seg > button { position:relative; z-index:1; flex:1; background:none; border:none; cursor:pointer;
+                        padding:9px 0; font-size:11.5px; font-weight:700; color:${C.dim};
+                        transition:color .2s ease; white-space:nowrap; }
+        .seg > button.on { color:${C.accent}; font-weight:800; }
+
+        /* horizontal scrollers keep their own scrollbar out of the design */
+        .hscroll { display:flex; gap:7px; overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none; }
+        .hscroll::-webkit-scrollbar { display:none; }
+
         /* thin gradient progress bar, used for weeks, goals and readiness */
         .bar { height:6px; border-radius:999px; background:${C.bgSoft}; overflow:hidden; border:1px solid ${C.line}; }
         .bar > i { display:block; height:100%; border-radius:999px; background:${C.grad}; transition:width .55s cubic-bezier(.2,.8,.2,1); }
 
-        .sw { width:46px; height:27px; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
+        .sw { width:46px; height:27px; min-height:27px; flex-shrink:0; border-radius:999px; border:none; cursor:pointer; position:relative; transition:background .2s; }
         .sw b { position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; transition:left .2s; }
+
+        /* the round tick on every plan row */
+        .tick { width:27px; height:27px; min-height:27px; flex-shrink:0; border-radius:50%; cursor:pointer;
+                display:flex; align-items:center; justify-content:center;
+                font-size:14px; font-weight:900; padding:0;
+                transition:background .18s ease, border-color .18s ease, transform .12s ease; }
 
         /* Leaflet chrome matched to the dark theme */
         .leaflet-container { background:${C.bg}; font-family:'Manrope', system-ui, sans-serif; }
@@ -871,33 +1013,39 @@ export default function App() {
       {/* Ambient accent light behind everything */}
       <div className="aurora" aria-hidden="true"><i className="a1" /><i className="a2" /><i className="a3" /></div>
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "max(22px, env(safe-area-inset-top)) 16px calc(112px + env(safe-area-inset-bottom))" }}>
-        {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <Mark />
-              <h1 className="disp gtext" style={{ fontSize: 30, fontWeight: 700, margin: 0, letterSpacing: -1 }}>Stride</h1>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 620, margin: "0 auto", padding: "0 16px calc(118px + env(safe-area-inset-bottom))" }}>
+        {/* App bar — compact chrome that stays put while the screen scrolls.
+            The big scrolling masthead it replaces looked like the first card
+            of a web page; this looks like an app. */}
+        <div className={`appbar${scrolled ? " stuck" : ""}`}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "6px 0 12px" }}>
+            <Mark />
+            <div style={{ minWidth: 0 }}>
+              <div className="disp" style={{ fontSize: 18.5, fontWeight: 700, lineHeight: 1, letterSpacing: -0.4 }}>Stride</div>
+              <div style={{ fontSize: 9, letterSpacing: 1.8, color: C.dim, fontWeight: 800, marginTop: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{eyebrow}</div>
             </div>
-            <div style={{ fontSize: 9.5, letterSpacing: 2.4, color: C.dim, fontWeight: 800, marginTop: 6 }}>{eyebrow}</div>
-            {countdown && <div style={{ fontSize: 12, color: C.dim, marginTop: 3, fontWeight: 600 }}>{countdown}</div>}
-          </div>
-          <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
-            <svg width="100" height="100" style={{ transform: "rotate(-90deg)" }}>
-              <defs>
-                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor={C.accent} />
-                  <stop offset="100%" stopColor={C.accent2} />
-                </linearGradient>
-              </defs>
-              <circle cx="50" cy="50" r={R} fill="none" stroke={C.surface2} strokeWidth="7" />
-              <circle cx="50" cy="50" r={R} fill="none" stroke="url(#ringGrad)" strokeWidth="7" strokeLinecap="round"
-                strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)}
-                style={{ transition: "stroke-dashoffset .45s cubic-bezier(.2,.8,.2,1)", filter: `drop-shadow(0 0 7px ${tint(C.accent, .5)})` }} />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <span className="num gtext" style={{ fontSize: 24, fontWeight: 700 }}>{pctShown}%</span>
-              <span style={{ fontSize: 8.5, color: C.dim, letterSpacing: 1.2, fontWeight: 700 }}>{stats.done}/{TOTAL} DAYS</span>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 9 }}>
+              <button onClick={() => openShare(progressShareSpec())} className="card tap" aria-label="Share my progress"
+                style={{ width: 38, height: 38, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, cursor: "pointer", padding: 0 }}>
+                <Icon name="share" size={16} />
+              </button>
+              <button onClick={() => { setTab("stats"); setStatsView("overview"); haptic(6); }} className="tap"
+                aria-label={`${pctShown}% of the plan complete`}
+                style={{ position: "relative", width: 42, height: 42, background: "none", border: "none", padding: 0, cursor: "pointer", flexShrink: 0 }}>
+                <svg width="42" height="42" viewBox="0 0 42 42" style={{ transform: "rotate(-90deg)", display: "block" }}>
+                  <defs>
+                    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stopColor={C.accent} />
+                      <stop offset="100%" stopColor={C.accent2} />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="21" cy="21" r={R} fill="none" stroke={C.surface2} strokeWidth="4.5" />
+                  <circle cx="21" cy="21" r={R} fill="none" stroke="url(#ringGrad)" strokeWidth="4.5" strokeLinecap="round"
+                    strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)}
+                    style={{ transition: "stroke-dashoffset .45s cubic-bezier(.2,.8,.2,1)", filter: `drop-shadow(0 0 5px ${tint(C.accent, .55)})` }} />
+                </svg>
+                <span className="num" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: C.text }}>{pctShown}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -908,32 +1056,61 @@ export default function App() {
           </button>
         )}
 
-        {tab === "stats" && (
+      {tab === "stats" && (
           <div className="rise">
-            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-              <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-                style={{ flex: 1.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 16, padding: "16px 0", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
-                <Icon name="play" size={17} /> Track run
-              </button>
-              <button onClick={() => { haptic(10); setRouteMakerOpen(true); }} className="card tap disp"
-                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 16, padding: "16px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", color: C.text }}>
-                <Icon name="map" size={16} /> Routes
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="KM LOGGED" value={kmShown.toFixed(1)} hero delay={0} />
-              <Stat label="STREAK" value={stats.curStreak} sub={`best ${stats.best} day${stats.best === 1 ? "" : "s"}`} delay={0.05} />
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <Stat label="RUNS DONE" value={stats.runsLogged} delay={0.1} />
-              <Stat label="TIME ON FEET" value={stats.minTotal ? fmtMin(stats.minTotal) : "—"} delay={0.15} />
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <Stat label="AVG PACE" value={fmtPace(stats.avgPaceSec) || "—"} sub={stats.avgPaceSec ? "min / km" : ""} delay={0.2} />
-              <Stat label="STITCHES" value={stats.stitches} sub="should drop!" color={stats.stitches ? C.warn : C.easy} delay={0.25} />
-            </div>
+            <Screen
+              title="Your numbers"
+              sub={stats.runsLogged ? `${stats.runsLogged} run${stats.runsLogged === 1 ? "" : "s"} logged · ${stats.kmLogged.toFixed(1)} km covered` : "Log a session and this fills up"}
+              action={<ShareBtn spec={progressShareSpec()} />} />
 
-            {/* Personal bests */}
+            <Segmented
+              items={[
+                { id: "overview", label: "Overview" },
+                { id: "goal", label: "Goal" },
+                { id: "charts", label: "Charts" },
+                { id: "awards", label: "Awards" },
+                { id: "settings", label: "Setup" },
+              ]}
+              value={statsView} onChange={setStatsView} />
+
+            {statsView === "overview" && (<div className="rise">
+              {/* Headline card: the one number that matters, and the two
+                  actions people actually came here for. */}
+              <div className="card accented" style={{ borderRadius: 24, padding: "20px 20px 18px", marginBottom: 10, overflow: "hidden" }}>
+                <div className="lab">Total distance</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 7, margin: "8px 0 14px" }}>
+                  <span className="num gtext" style={{ fontSize: 52, fontWeight: 700, lineHeight: 1 }}>{kmShown.toFixed(1)}</span>
+                  <span className="num" style={{ fontSize: 18, fontWeight: 700, color: C.dim }}>km</span>
+                </div>
+                <Bar pct={pct} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, fontSize: 11.5, color: C.dim, fontWeight: 600 }}>
+                  <span>{stats.done} of {TOTAL} sessions</span>
+                  <span className="num" style={{ marginLeft: "auto", color: C.accent, fontWeight: 800 }}>{pct}%</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                  <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                    style={{ flex: 1.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 15, padding: "14px 0", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                    <Icon name="play" size={16} /> Track run
+                  </button>
+                  <button onClick={() => { haptic(10); setRouteMakerOpen(true); }} className="card tap disp"
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 15, padding: "14px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", color: C.text }}>
+                    <Icon name="map" size={15} /> Routes
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <Tile label="Streak" value={stats.curStreak} unit="d" sub={`best ${stats.best}`} hero delay={0} />
+                <Tile label="Runs done" value={stats.runsLogged} delay={0.05} />
+                <Tile label="On feet" value={stats.minTotal ? fmtMin(stats.minTotal) : "—"} delay={0.1} />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <Tile label="Avg pace" value={fmtPace(stats.avgPaceSec) || "—"} sub={stats.avgPaceSec ? "min / km" : ""} delay={0.15} />
+                <Tile label="Longest" value={stats.maxKm ? stats.maxKm : "—"} unit={stats.maxKm ? "km" : ""} delay={0.2} />
+                <Tile label="Stitches" value={stats.stitches} color={stats.stitches ? C.warn : C.easy} sub="should drop!" delay={0.25} />
+              </div>
+
+{/* Personal bests */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Personal records</Label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -947,8 +1124,10 @@ export default function App() {
                 <PB label="TOTAL KCAL" value={stats.totalKcal ? Math.round(stats.totalKcal).toLocaleString() : "—"} />
               </div>
             </Card>
+            </div>)}
 
-            {/* Race goal — the target that replaces "get to 5K" once it's done */}
+            {statsView === "goal" && (<div className="rise">
+{/* Race goal — the target that replaces "get to 5K" once it's done */}
             <Card className="accented" style={{ marginBottom: 12 }}>
               <Label right={goalDays != null && (
                 <span className="num" style={{ fontSize: 11, fontWeight: 800, color: goalDays < 0 ? C.dim : C.accent }}>
@@ -995,8 +1174,7 @@ export default function App() {
                 {goalDate && <button onClick={() => saveGoalDate("")} className="chip tap" style={{ fontSize: 11, padding: "6px 11px" }}>Clear</button>}
               </div>
             </Card>
-
-            {/* Equivalent finish times across every distance */}
+{/* Equivalent finish times across every distance */}
             <Card style={{ marginBottom: 12 }}>
               <Label right={raceRef && <span style={{ fontSize: 10, color: C.dim2, fontWeight: 600 }}>from {raceRef.km.toFixed(1)} km</span>}>
                 Race predictions
@@ -1032,8 +1210,14 @@ export default function App() {
                 </>
               )}
             </Card>
+              <button onClick={() => openShare(goalShareSpec())} className="card tap"
+                style={{ width: "100%", borderRadius: 16, padding: "14px 0", marginBottom: 12, color: C.text, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+                <Icon name="share" size={15} /> Share my race goal
+              </button>
+            </div>)}
 
-            {/* Schedule / today */}
+            {statsView === "charts" && (<div className="rise">
+{/* Schedule / today */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Plan schedule</Label>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1047,8 +1231,7 @@ export default function App() {
               )}
               {!startDate && <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Set this to light up today's session and a day-by-day calendar.</div>}
             </Card>
-
-            {/* Charts */}
+{/* Charts */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Km per week · logged vs plan</Label>
               <WeeklyBars data={weekly} />
@@ -1061,43 +1244,39 @@ export default function App() {
               <Label>Cumulative distance</Label>
               <CumulativeArea points={cumulative} />
             </Card>
+            </div>)}
 
-            {/* Achievements */}
-            <Card style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-                <span style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700 }}>ACHIEVEMENTS</span>
-                <span style={{ marginLeft: "auto", fontSize: 11, color: C.accent, fontWeight: 700 }}>{unlocked.size}/{ACHIEVEMENTS.length}</span>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-                {ACHIEVEMENTS.map((a) => {
-                  const got = unlocked.has(a.id);
-                  return (
-                    <div key={a.id} title={`${a.title} — ${a.desc}`}
-                      style={{
-                        textAlign: "center", padding: "11px 4px", borderRadius: 13,
-                        background: got ? `linear-gradient(150deg,${tint(C.accent, .14)},${tint(C.accent2, .06)})` : "transparent",
-                        border: `1px solid ${got ? tint(C.accent, .3) : "transparent"}`,
-                        opacity: got ? 1 : 0.38,
-                      }}>
-                      <div style={{ fontSize: 24, filter: got ? "none" : "grayscale(1)" }}>{a.icon}</div>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 4, lineHeight: 1.2 }}>{a.title}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
+            {statsView === "awards" && (<div className="rise">
+              <Card style={{ marginBottom: 12 }}>
+                <Label right={<span className="num" style={{ fontSize: 11.5, color: C.accent, fontWeight: 800 }}>{unlocked.size}/{ACHIEVEMENTS.length}</span>}>Achievements</Label>
+                <div style={{ marginBottom: 15 }}><Bar pct={(unlocked.size / ACHIEVEMENTS.length) * 100} /></div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  {ACHIEVEMENTS.map((a) => {
+                    const got = unlocked.has(a.id);
+                    return (
+                      <button key={a.id} disabled={!got} onClick={() => openShare(achievementShareSpec(a))}
+                        className={got ? "tap" : ""} title={`${a.title} — ${a.desc}`}
+                        style={{
+                          textAlign: "center", padding: "14px 6px 11px", borderRadius: 16, cursor: got ? "pointer" : "default",
+                          background: got ? `linear-gradient(150deg,${tint(C.accent, .15)},${tint(C.accent2, .05)})` : tint(C.text, .025),
+                          border: `1px solid ${got ? tint(C.accent, .32) : C.line}`,
+                          opacity: got ? 1 : 0.42,
+                        }}>
+                        <div style={{ fontSize: 26, filter: got ? "none" : "grayscale(1)" }}>{a.icon}</div>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 6, lineHeight: 1.25 }}>{a.title}</div>
+                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: 1, marginTop: 5, color: got ? C.accent : "transparent" }}>SHARE</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 11, color: C.dim2, marginTop: 13, lineHeight: 1.5 }}>
+                  Tap a badge you've earned to turn it into a share card.
+                </div>
+              </Card>
+            </div>)}
 
-            {/* Settings & tools — collapsed by default to keep Stats scannable */}
-            <button onClick={() => { setSettingsOpen((o) => !o); haptic(6); }} className="card tap"
-              style={{ width: "100%", textAlign: "left", padding: "14px 16px", marginBottom: 12, borderRadius: 16, color: C.text, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 9 }}>
-              <span style={{ color: C.accent, display: "flex" }}><Icon name="bell" size={16} /></span>
-              Settings &amp; tools
-              <span style={{ fontSize: 11, color: C.dim2, fontWeight: 600 }}>· appearance, alerts, backup</span>
-              <span style={{ marginLeft: "auto", color: C.dim, fontWeight: 700 }}>{settingsOpen ? "▾" : "▸"}</span>
-            </button>
-
-            {settingsOpen && (<div className="rise">
-            {/* Appearance */}
+            {statsView === "settings" && (<div className="rise">
+{/* Appearance */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Appearance</Label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
@@ -1124,8 +1303,7 @@ export default function App() {
                 Every gradient, chart and highlight in the app follows this pair of colours.
               </div>
             </Card>
-
-            {/* Notifications */}
+{/* Notifications */}
             <Card style={{ marginBottom: 12 }} innerRef={notifCardRef}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ flex: 1 }}>
@@ -1205,8 +1383,7 @@ export default function App() {
               <div style={{ height: 1, background: C.line, margin: "14px -18px" }} />
               <NotifDiagnostics />
             </Card>
-
-            {/* Import runs recorded elsewhere (a watch, another app) */}
+{/* Import runs recorded elsewhere (a watch, another app) */}
             {healthSupported() && (
               <Card style={{ marginBottom: 12 }}>
                 <Label>Import from your watch</Label>
@@ -1301,14 +1478,13 @@ export default function App() {
                 )}
               </Card>
             )}
-
-            {/* Data & backup */}
+{/* Data & backup */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Data &amp; backup</Label>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={exportData} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="download" size={14} /> Export</button>
                 <button onClick={() => importRef.current?.click()} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="upload" size={14} /> Import</button>
-                <button onClick={shareProgress} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="share" size={14} /> Share</button>
+                <button onClick={() => openShare(progressShareSpec())} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="share" size={14} /> Share card</button>
               </div>
               <input ref={importRef} type="file" accept="application/json,.json" style={{ display: "none" }}
                 onChange={(e) => { importData(e.target.files[0]); e.target.value = ""; }} />
@@ -1319,8 +1495,7 @@ export default function App() {
                 {" "}Importing merges with what's already here, so nothing gets wiped. Your data lives only on this device.
               </div>
             </Card>
-
-            {/* Stopwatch — treadmill / no-GPS fallback */}
+{/* Stopwatch — treadmill / no-GPS fallback */}
             <Card style={{ textAlign: "center", padding: 18 }}>
               <Label>Treadmill stopwatch · no GPS</Label>
               <div className={`num${swRun ? " gtext" : ""}`} style={{ fontSize: 54, fontWeight: 700, margin: "8px 0 14px", color: swRun ? undefined : C.text }}>{fmt(swMs)}</div>
@@ -1338,10 +1513,7 @@ export default function App() {
 
         {tab === "coach" && (
           <div className="rise">
-            <div style={{ display: "flex", alignItems: "baseline", marginBottom: 14 }}>
-              <h2 className="disp" style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>AI coach</h2>
-              <span style={{ marginLeft: "auto", fontSize: 10, color: C.dim, fontWeight: 600 }}>powered by Groq</span>
-            </div>
+            <Screen title="AI coach" sub={coachKey ? "Grounded in your real numbers · powered by Groq" : "Add a free Groq key to unlock it"} />
 
             {!coachKey && (
               <Card style={{ marginBottom: 12, borderColor: C.accent }}>
@@ -1495,32 +1667,42 @@ export default function App() {
           const shownMin = shown.reduce((s, h) => s + (parseFloat(h.e.min) || 0), 0);
           return (
           <div className="rise">
+            <Screen
+              title="History"
+              sub={history.length ? `${shown.length} session${shown.length === 1 ? "" : "s"} · ${shownKm.toFixed(1)} km${shownMin ? ` · ${fmtMin(shownMin)}` : ""}` : "Every session you tick off lands here"}
+              action={history.length > 0 ? <ShareBtn spec={progressShareSpec()} /> : null} />
+
             {history.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                {[["all", "All"], ["run", "Runs"], ["gps", "GPS"]].map(([id, lbl]) => (
+              <div className="hscroll" style={{ marginBottom: 14 }}>
+                {[["all", "All"], ["run", "Runs"], ["gps", "GPS tracked"]].map(([id, lbl]) => (
                   <button key={id} onClick={() => { setHistFilter(id); haptic(5); }} className={`chip tap${histFilter === id ? " on" : ""}`}>
                     {lbl}
                   </button>
                 ))}
-                <span className="num" style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
-                  {shown.length} · {shownKm.toFixed(1)} km{shownMin ? ` · ${fmtMin(shownMin)}` : ""}
-                </span>
               </div>
             )}
+
             {history.length === 0 ? (
-              <Card style={{ textAlign: "center" }}>
-                <div className="disp" style={{ fontSize: 18, fontWeight: 700 }}>No runs logged yet</div>
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>Tick off a day on the Plan tab and it'll show up here.</div>
+              <Card style={{ textAlign: "center", padding: "34px 20px" }}>
+                <div style={{ fontSize: 34 }}>🏃</div>
+                <div className="disp" style={{ fontSize: 18, fontWeight: 700, marginTop: 10 }}>No runs logged yet</div>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.55 }}>Track a run with GPS, or tick off a day on the Plan tab, and it'll show up here.</div>
+                <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 16, borderRadius: 14, padding: "13px 22px", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>
+                  <Icon name="play" size={15} /> Track your first run
+                </button>
               </Card>
             ) : shown.length === 0 ? (
-              <Card style={{ textAlign: "center" }}>
+              <Card style={{ textAlign: "center", padding: 24 }}>
                 <div style={{ fontSize: 13, color: C.dim }}>Nothing matches this filter yet.</div>
               </Card>
             ) : (
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gap: 10 }}>
                 {shown.map((h, idx) => {
                   const p = fmtPace(paceSec(h.e.min, h.e.km));
-                  const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+                  const km = parseFloat(h.e.km) || 0;
+                  const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "—";
+                  const hasRoute = h.e.route && h.e.route.length > 1;
                   const extras = [];
                   if (h.e.elev > 0) extras.push(`▲ ${h.e.elev} m`);
                   if (h.e.kcal > 0) extras.push(`${h.e.kcal} kcal`);
@@ -1529,72 +1711,77 @@ export default function App() {
                   if (h.e.hrAvg > 0) extras.push(`♥ ${h.e.hrAvg} avg · ${h.e.hrMax} max`);
                   if (h.e.cadence > 0) extras.push(`${h.e.cadence} spm`);
                   return (
-                    <Card key={h.key} style={{ padding: "12px 14px", animation: `rise .3s ease both`, animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: typeColor(h.type) }} />
-                        <div style={{ flex: 1 }}>
-                          <div className="disp" style={{ fontSize: 15, fontWeight: 700 }}>{h.title}{h.e.feel ? ` ${FEELS[h.e.feel - 1]}` : ""}</div>
-                          <div style={{ fontSize: 11, color: C.dim }}>Week {h.week} · {h.d} · {date}</div>
-                          {h.e.note && <div style={{ fontSize: 12, color: C.dim, marginTop: 4, fontStyle: "italic" }}>"{h.e.note}"</div>}
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          {parseFloat(h.e.km) > 0 && <div className="num gtext" style={{ fontSize: 19, fontWeight: 700 }}>{parseFloat(h.e.km)} km</div>}
-                          <div style={{ fontSize: 11, color: C.dim }}>{h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}</div>
-                          {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>STITCH</div>}
-                          {h.e.tracked && <div style={{ fontSize: 9, color: C.easy, fontWeight: 800, letterSpacing: 1 }}>● GPS</div>}
-                          {h.e.imported && !h.e.tracked && <div style={{ fontSize: 9, color: C.dim, fontWeight: 800, letterSpacing: 1 }}>● IMPORTED</div>}
-                          {parseFloat(h.e.km) > 0 && (
-                            <button onClick={() => { haptic(8); shareRunCard({ km: h.e.km, min: h.e.min, durMs: h.e.durMs, route: h.e.route, elev: h.e.elev, kcal: h.e.kcal, runKm: h.e.runKm, walkKm: h.e.walkKm, date: h.e.date }); }}
-                              className="chip" style={{ padding: "4px 10px", fontSize: 10, marginTop: 5 }}>
-                              <Icon name="share" size={11} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />share
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {(extras.length > 0 || (h.e.route && h.e.route.length > 1)) && (
-                        <div style={{ marginTop: 10 }}>
-                          {h.e.route && h.e.route.length > 1 && (
-                            <div style={{ position: "relative" }}>
-                              <LiveMap points={h.e.route} height={150} interactive={false} />
-                              <button onClick={() => { haptic(8); setReplayRun({ route: h.e.route, km: h.e.km, durMs: h.e.durMs }); }}
-                                className="chip" style={{ position: "absolute", bottom: 8, right: 8, zIndex: 500, background: "rgba(11,12,15,0.82)", color: C.accent, border: `1px solid ${C.accent}55`, padding: "5px 11px", fontSize: 11, fontWeight: 700 }}>
-                                ▶ Replay
-                              </button>
-                            </div>
-                          )}
-                          {extras.length > 0 && (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                              {extras.map((x, i) => (
-                                <span key={i} className="chip" style={{ background: C.surface2, color: C.dim, fontSize: 11 }}>{x}</span>
-                              ))}
-                            </div>
-                          )}
-                          {h.e.splits && h.e.splits.length > 0 && (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                              {h.e.splits.map((s, i) => (
-                                <span key={i} className="chip" style={{ background: C.surface2, color: C.text, fontSize: 11 }}>{i + 1}k · {fmtPace(s)}</span>
-                              ))}
-                            </div>
-                          )}
+                    <Card key={h.key} style={{ padding: 0, overflow: "hidden", borderRadius: 20, animation: "rise .3s ease both", animationDelay: `${Math.min(idx * 0.03, 0.3)}s` }}>
+                      {hasRoute && (
+                        <div style={{ position: "relative" }}>
+                          <LiveMap points={h.e.route} height={158} interactive={false} />
+                          <button onClick={() => { haptic(8); setReplayRun({ route: h.e.route, km: h.e.km, durMs: h.e.durMs }); }}
+                            className="chip tap" style={{ position: "absolute", bottom: 9, right: 9, zIndex: 500, background: "rgba(8,9,13,.86)", color: C.accent, border: `1px solid ${tint(C.accent, .45)}`, padding: "6px 12px", fontSize: 11, fontWeight: 700, backdropFilter: "blur(8px)" }}>
+                            ▶ Replay
+                          </button>
+                          <span style={{ position: "absolute", top: 9, left: 9, zIndex: 500, fontSize: 8.5, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 9px", borderRadius: 999 }}>GPS</span>
                         </div>
                       )}
-                      {parseFloat(h.e.km) > 0 && (
-                        <div style={{ marginTop: 10 }}>
-                          {runFeedback[h.key] ? (
-                            <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontSize: 12.5, lineHeight: 1.55, color: C.text, whiteSpace: "pre-wrap" }}>
-                              {runFeedback[h.key]}
-                              <button onClick={() => coachThisRun(h)} disabled={runFeedbackBusy === h.key} className="chip tap" style={{ marginTop: 8, fontSize: 11 }}>
-                                {runFeedbackBusy === h.key ? "…" : "Ask again"}
-                              </button>
+
+                      <div style={{ padding: "13px 15px 14px" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="disp" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.25 }}>
+                              {h.title}{h.e.feel ? ` ${FEELS[h.e.feel - 1]}` : ""}
                             </div>
-                          ) : (
+                            <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>
+                              {date} · Week {h.week} · {h.d}
+                              {h.e.imported && !h.e.tracked ? " · imported" : ""}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            {km > 0 && <div className="num gtext" style={{ fontSize: 21, fontWeight: 700, lineHeight: 1 }}>{km}<span style={{ fontSize: 11 }}> km</span></div>}
+                            <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>
+                              {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}
+                            </div>
+                            {h.e.stitch && <div style={{ fontSize: 9, color: C.warn, fontWeight: 800, letterSpacing: 1, marginTop: 3 }}>STITCH</div>}
+                          </div>
+                        </div>
+
+                        {h.e.note && (
+                          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 9, fontStyle: "italic", lineHeight: 1.5 }}>"{h.e.note}"</div>
+                        )}
+
+                        {extras.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 11 }}>
+                            {extras.map((x, i) => (
+                              <span key={i} className="chip" style={{ background: tint(C.text, .05), color: C.dim, fontSize: 11, padding: "6px 11px" }}>{x}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        {h.e.splits && h.e.splits.length > 0 && (
+                          <div className="hscroll" style={{ marginTop: 8 }}>
+                            {h.e.splits.map((s, i) => (
+                              <span key={i} className="chip" style={{ background: tint(C.text, .05), color: C.text, fontSize: 11, padding: "6px 11px", flexShrink: 0 }}>{i + 1}k · {fmtPace(s)}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        {km > 0 && (
+                          <div style={{ display: "flex", gap: 8, marginTop: 13 }}>
+                            <button onClick={() => openShare(runShareSpec(h))} className="chip tap"
+                              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "11px 0", fontSize: 12.5, fontWeight: 700, background: tint(C.accent, .12), color: C.accent, borderColor: tint(C.accent, .38) }}>
+                              <Icon name="share" size={14} /> Share card
+                            </button>
                             <button onClick={() => coachThisRun(h)} disabled={runFeedbackBusy === h.key} className="chip tap"
-                              style={{ fontSize: 11, opacity: runFeedbackBusy === h.key ? 0.6 : 1 }}>
-                              {runFeedbackBusy === h.key ? "Coach is reading…" : "🧠 Coach this run"}
+                              style={{ flex: 1, padding: "11px 0", fontSize: 12.5, fontWeight: 700, opacity: runFeedbackBusy === h.key ? 0.6 : 1 }}>
+                              {runFeedbackBusy === h.key ? "Reading…" : runFeedback[h.key] ? "Ask again" : "🧠 Coach this run"}
                             </button>
-                          )}
-                        </div>
-                      )}
+                          </div>
+                        )}
+
+                        {runFeedback[h.key] && (
+                          <div className="rise" style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 13, padding: 12, marginTop: 10, fontSize: 12.5, lineHeight: 1.6, color: C.text, whiteSpace: "pre-wrap" }}>
+                            {runFeedback[h.key]}
+                          </div>
+                        )}
+                      </div>
                     </Card>
                   );
                 })}
@@ -1606,82 +1793,125 @@ export default function App() {
 
         {tab === "plan" && (
           <div className="rise">
+            <Screen
+              title={heroIdx >= 0 ? "Today" : hero ? "Next up" : "Block complete"}
+              sub={countdown || (hero ? `Week ${hero.week} of ${WEEKS.length} · ${WEEKS.find((w) => w.n === hero.week)?.label}` : "Every session ticked off")}
+              action={history.length > 0 ? <ShareBtn spec={progressShareSpec()} /> : null} />
+
             {/* Notifications being off is not a settings-screen detail — it is
                 the reason the reminders and run alerts the user switched on are
                 never arriving, so it is said here, where they actually look. */}
             {(isNative() || notificationsSupported()) && perm !== "granted" && (
-              <button onClick={goToNotifications} className="chip tap"
+              <button onClick={goToNotifications} className="tap"
                 style={{
-                  width: "100%", padding: "11px 14px", marginBottom: 14, fontSize: 12.5,
-                  background: tint(C.warn, .14), color: C.text, border: `1px solid ${tint(C.warn, .45)}`,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textAlign: "left",
+                  width: "100%", padding: "12px 14px", marginBottom: 12, borderRadius: 16, cursor: "pointer",
+                  background: tint(C.warn, .12), color: C.text, border: `1px solid ${tint(C.warn, .42)}`,
+                  display: "flex", alignItems: "center", gap: 11, textAlign: "left",
                 }}>
-                <Icon name="bell" size={14} />
-                Notifications are off — reminders and run alerts can't reach you. Fix
+                <span style={{ color: C.warn, display: "flex" }}><Icon name="bell" size={16} /></span>
+                <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.4, fontWeight: 600 }}>
+                  Notifications are off — reminders and run alerts can't reach you.
+                </span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: C.warn, flexShrink: 0 }}>Fix →</span>
               </button>
             )}
-            {!startDate && (
-              <button onClick={() => { setTab("stats"); haptic(8); }} className="chip"
-                style={{ width: "100%", padding: "11px 14px", marginBottom: 14, background: C.surface, color: C.text, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <Icon name="calendar" size={14} /> Add your start date to highlight today's run
-              </button>
-            )}
-            {/* Today / next-up hero with inline actions */}
+
+            {/* Today / next-up hero — the screen's centre of gravity */}
             {hero ? (
-              <div className="card accented" style={{ borderRadius: 22, padding: "18px 20px 20px", marginBottom: 18, overflow: "hidden" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div className="card accented" style={{ borderRadius: 24, padding: "18px 20px 20px", marginBottom: 14, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{
                     fontSize: 9.5, letterSpacing: 1.6, fontWeight: 800, color: C.bg,
-                    background: C.grad, borderRadius: 999, padding: "4px 10px",
+                    background: C.grad, borderRadius: 999, padding: "4px 11px",
                   }}>
                     {heroIdx >= 0 ? "TODAY" : "NEXT UP"}
                   </span>
-                  <span style={{ fontSize: 10, letterSpacing: 1.6, color: typeColor(hero.type), fontWeight: 800 }}>
-                    WEEK {hero.week} · {hero.d} · {hero.type.toUpperCase()}
-                  </span>
+                  <span style={{
+                    fontSize: 9, letterSpacing: 1.4, fontWeight: 800, color: typeColor(hero.type),
+                    background: tint(typeColor(hero.type), .13), border: `1px solid ${tint(typeColor(hero.type), .35)}`,
+                    borderRadius: 999, padding: "3px 9px",
+                  }}>{hero.type.toUpperCase()}</span>
+                  <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 700, letterSpacing: 0.6 }}>W{hero.week} · {hero.d}</span>
                   {heroIdx >= 0 && (
                     <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
                       {dateForDay(startDate, heroIdx).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                     </span>
                   )}
                 </div>
-                <div className="disp" style={{ fontSize: 30, fontWeight: 700, margin: "10px 0 3px", lineHeight: 1.1, textDecoration: heroEntry.done ? "line-through" : "none", color: heroEntry.done ? C.dim : C.text }}>
+
+                <div className="disp" style={{ fontSize: 29, fontWeight: 700, margin: "12px 0 4px", lineHeight: 1.12, textDecoration: heroEntry.done ? "line-through" : "none", color: heroEntry.done ? C.dim : C.text }}>
                   {hero.title}
                 </div>
-                <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>{hero.detail}</div>
+                <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.55 }}>{hero.detail}</div>
+
                 {hero.km > 0 && (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 12 }}>
-                    <span className="num gtext" style={{ fontSize: 26, fontWeight: 700 }}>{hero.km}</span>
-                    <span className="lab">km on the plan</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 15, paddingTop: 14, borderTop: `1px solid ${tint(C.text, .07)}` }}>
+                    <div>
+                      <div className="num gtext" style={{ fontSize: 27, fontWeight: 700, lineHeight: 1 }}>{hero.km}</div>
+                      <div className="lab" style={{ marginTop: 5 }}>km target</div>
+                    </div>
+                    {heroIdx >= 0 && (
+                      <div>
+                        <div className="num" style={{ fontSize: 27, fontWeight: 700, lineHeight: 1, color: C.text }}>{heroIdx + 1}</div>
+                        <div className="lab" style={{ marginTop: 5 }}>of {TOTAL} days</div>
+                      </div>
+                    )}
+                    {heroEntry.km > 0 && (
+                      <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                        <div className="num" style={{ fontSize: 20, fontWeight: 700, color: C.good }}>{parseFloat(heroEntry.km)} km</div>
+                        <div className="lab" style={{ marginTop: 5 }}>logged</div>
+                      </div>
+                    )}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 8, marginTop: 15 }}>
-                  <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
-                    style={{ flex: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 14, padding: "13px 0", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>
-                    <Icon name="play" size={15} /> Start GPS run
-                  </button>
-                  <button onClick={() => update(hero.key, { done: !heroEntry.done })} className="chip tap"
-                    style={{ flex: 1, padding: "13px 0", fontSize: 13, fontWeight: 700, background: heroEntry.done ? tint(C.accent, .16) : C.bgSoft, color: heroEntry.done ? C.accent : C.dim, borderColor: heroEntry.done ? tint(C.accent, .4) : C.line }}>
-                    {heroEntry.done ? "Done ✓" : "Mark done"}
-                  </button>
+
+                {/* On a rest day the session *is* not running, so offering
+                    "Start GPS run" as the primary action would be telling the
+                    user to ignore their own plan. Tick it off instead. */}
+                <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                  {hero.type === "rest" ? (
+                    <>
+                      <button onClick={() => update(hero.key, { done: !heroEntry.done })} className="tap cta disp"
+                        style={{ flex: 1.4, borderRadius: 15, padding: "14px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", opacity: heroEntry.done ? 0.75 : 1 }}>
+                        {heroEntry.done ? "Rest day done ✓" : "Mark rest day done"}
+                      </button>
+                      <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="chip tap"
+                        style={{ flex: 1, padding: "14px 0", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <Icon name="play" size={14} /> Run anyway
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="tap cta disp"
+                        style={{ flex: 1.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 15, padding: "14px 0", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                        <Icon name="play" size={15} /> Start GPS run
+                      </button>
+                      <button onClick={() => update(hero.key, { done: !heroEntry.done })} className="chip tap"
+                        style={{ flex: 1, padding: "14px 0", fontSize: 13, fontWeight: 700, background: heroEntry.done ? tint(C.accent, .16) : C.bgSoft, color: heroEntry.done ? C.accent : C.dim, borderColor: heroEntry.done ? tint(C.accent, .4) : C.line }}>
+                        {heroEntry.done ? "Done ✓" : "Mark done"}
+                      </button>
+                    </>
+                  )}
                 </div>
+
                 {heroEntry.done && nextUp && nextUp.key !== hero.key && (
-                  <div style={{ fontSize: 11, color: C.dim, marginTop: 12 }}>
+                  <div style={{ fontSize: 11.5, color: C.dim, marginTop: 13 }}>
                     Next up: Week {nextUp.week} · {nextUp.d} · {nextUp.title}
                   </div>
                 )}
               </div>
             ) : (
-              <div className="card glow" style={{ borderRadius: 16, padding: 18, marginBottom: 18, textAlign: "center" }}>
-                <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>🎖️ Mission complete</div>
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 4 }}>You finished every session. Keep the momentum — let your coach build what's next.</div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
+              <div className="card glow" style={{ borderRadius: 22, padding: 20, marginBottom: 14, textAlign: "center" }}>
+                <div style={{ fontSize: 34 }}>🎖️</div>
+                <div className="disp" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>Mission complete</div>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.55 }}>You finished every session. Keep the momentum — let your coach build what's next.</div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 16 }}>
                   <button onClick={() => { haptic(12); setTab("coach"); generatePlan(); }} disabled={planBusy} className="tap cta disp"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 12, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: planBusy ? 0.6 : 1 }}>
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, borderRadius: 14, padding: "13px 20px", fontSize: 14.5, fontWeight: 700, cursor: "pointer", opacity: planBusy ? 0.6 : 1 }}>
                     🚀 {planBusy ? "Building…" : "Build my next block"}
                   </button>
                   <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="chip tap disp"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "12px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "13px 18px", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>
                     <Icon name="play" size={15} /> Victory run
                   </button>
                 </div>
@@ -1690,11 +1920,11 @@ export default function App() {
 
             {/* Goal countdown strip — the target that comes after this block */}
             {goalDate && goalDays != null && goalDays >= 0 && goal && (
-              <div className="card tap" onClick={() => { setTab("stats"); haptic(6); }}
-                style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 16, padding: "13px 15px", marginBottom: 16 }}>
+              <div className="card tap" onClick={() => { setTab("stats"); setStatsView("goal"); haptic(6); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 18, padding: "13px 15px", marginBottom: 10 }}>
                 <span style={{ color: C.accent, display: "flex" }}><Icon name="flag" size={18} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="lab" style={{ marginBottom: 2 }}>{goal.name}</div>
+                  <div className="lab" style={{ marginBottom: 3 }}>{goal.name}</div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
                     {goalDays === 0 ? "Race day is today" : `${goalDays} day${goalDays === 1 ? "" : "s"} to race day`}
                     {goalPrediction ? ` · on track for ${fmtDuration(goalPrediction.sec)}` : ""}
@@ -1704,32 +1934,36 @@ export default function App() {
               </div>
             )}
 
-            <button onClick={() => { setTipsOpen((o) => !o); haptic(6); }} className="chip"
-              style={{ width: "100%", textAlign: "left", padding: "12px 14px", marginBottom: 16, background: C.surface, color: C.text, fontSize: 13 }}>
-              {tipsOpen ? "▾" : "▸"} Beat the side stitch
-            </button>
-            {tipsOpen && (
-              <div className="rise" style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px", marginBottom: 16, fontSize: 13, lineHeight: 1.55, color: C.dim }}>
-                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>Belly breathing.</b> Deep into your stomach, not shallow into the chest — your #1 weapon.</p>
-                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>Exhale on the opposite foot</b> to the stitch side.</p>
-                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>No food 2–3h before.</b> Don't chug water right before either.</p>
-                <p style={{ margin: 0 }}><b style={{ color: C.text }}>Slow down</b> to a pace where you could still talk.</p>
-              </div>
-            )}
+            {/* Secondary actions — one row, so the hero keeps its single CTA */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {[
+                { icon: "map", label: "Plan a route", onClick: () => { haptic(10); setRouteMakerOpen(true); } },
+                { icon: "target", label: "Ask the coach", onClick: () => { haptic(8); setTab("coach"); } },
+                { icon: "calendar", label: startDate ? "Schedule" : "Set start date", onClick: () => { haptic(8); setTab("stats"); setStatsView("charts"); } },
+              ].map((a) => (
+                <button key={a.label} onClick={a.onClick} className="card tap"
+                  style={{ flex: 1, borderRadius: 16, padding: "13px 4px 11px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", color: C.text }}>
+                  <span style={{ color: C.accent, display: "flex" }}><Icon name={a.icon} size={17} /></span>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>{a.label}</span>
+                </button>
+              ))}
+            </div>
 
             {WEEKS.map((w) => {
               const wDone = w.days.filter((_, i) => log[`w${w.n}d${i}`] && log[`w${w.n}d${i}`].done).length;
               const weekDone = wDone === w.days.length;
               const collapsed = weekDone && !openWeeks[w.n];
+              const weekKm = w.days.reduce((sum, d) => sum + (d.km || 0), 0);
               return (
-                <div key={w.n} className="stagger" style={{ marginBottom: 22, animationDelay: `${(w.n - 1) * 0.06}s` }}>
+                <div key={w.n} className="stagger" style={{ marginBottom: 18, animationDelay: `${Math.min((w.n - 1) * 0.05, 0.3)}s` }}>
                   <div className={weekDone ? "tap" : ""}
                     onClick={() => { if (weekDone) { setOpenWeeks((o) => ({ ...o, [w.n]: !o[w.n] })); haptic(5); } }}
-                    style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                    <span className="disp" style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: weekDone ? C.accent : C.text }}>WEEK {w.n}</span>
-                    <span style={{ fontSize: 11, color: C.dim }}>{w.label}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 11, color: weekDone ? C.accent : C.dim, fontWeight: 700 }}>
-                      {weekDone ? `✓ done ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
+                    style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9, padding: "0 2px" }}>
+                    <span className="disp" style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: 1.4, color: weekDone ? C.accent : C.text }}>WEEK {w.n}</span>
+                    <span style={{ fontSize: 11, color: C.dim, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.label}</span>
+                    <span className="num" style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim2, fontWeight: 700, flexShrink: 0 }}>{weekKm.toFixed(0)} km</span>
+                    <span className="num" style={{ fontSize: 11, color: weekDone ? C.accent : C.dim, fontWeight: 800, flexShrink: 0 }}>
+                      {weekDone ? `✓ ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
                     </span>
                   </div>
                   <div style={{ marginBottom: 10 }}><Bar pct={(wDone / w.days.length) * 100} /></div>
@@ -1740,27 +1974,35 @@ export default function App() {
                       const isOpen = open === key;
                       const flatIdx = (w.n - 1) * 7 + di;
                       const isToday = flatIdx === todayIdx;
+                      const col = typeColor(day.type);
                       return (
                         <div key={di}>
                           <div className="row tap card" onClick={() => { setOpen(isOpen ? null : key); haptic(5); }}
                             style={{
-                              display: "flex", alignItems: "center", gap: 12, padding: "12px 13px",
-                              borderColor: isToday ? tint(C.accent, .55) : e.done ? tint(typeColor(day.type), .45) : C.line,
-                              borderRadius: isOpen ? "14px 14px 0 0" : 14,
+                              display: "flex", alignItems: "center", gap: 11, padding: "11px 13px",
+                              borderColor: isToday ? tint(C.accent, .55) : e.done ? tint(col, .4) : C.line,
+                              borderRadius: isOpen ? "16px 16px 0 0" : 16,
                               boxShadow: isToday ? C.glow : undefined,
                             }}>
                             <button onClick={(ev) => { ev.stopPropagation(); update(key, { done: !e.done }); }}
-                              className={e.done ? "pop" : ""}
-                              style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `2px solid ${e.done ? typeColor(day.type) : C.line}`, background: e.done ? typeColor(day.type) : "transparent", color: C.bg, fontWeight: 900, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              className={`tick${e.done ? " pop" : ""}`}
+                              aria-label={e.done ? `Mark ${day.title} not done` : `Mark ${day.title} done`}
+                              style={{ border: `2px solid ${e.done ? col : C.line2}`, background: e.done ? col : "transparent", color: C.bg }}>
                               {e.done ? "✓" : ""}
                             </button>
-                            <div style={{ width: 30, fontSize: 11, fontWeight: 700, color: C.dim }}>{day.d}</div>
-                            <div style={{ flex: 1 }}>
-                              <div className="disp" style={{ fontSize: 16, fontWeight: 700, textDecoration: e.done ? "line-through" : "none", color: e.done ? C.dim : C.text }}>{day.title}</div>
-                              <div style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{day.detail}</div>
+                            <div style={{ width: 27, flexShrink: 0 }}>
+                              <div style={{ fontSize: 10.5, fontWeight: 800, color: isToday ? C.accent : C.dim, letterSpacing: 0.4 }}>{day.d}</div>
+                              <div style={{ width: 14, height: 2.5, borderRadius: 2, background: col, marginTop: 4, opacity: e.done ? 1 : .5 }} />
                             </div>
-                            {isToday && <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "3px 7px", borderRadius: 999 }}>TODAY</span>}
-                            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: typeColor(day.type) }}>{day.type.toUpperCase()}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="disp" style={{ fontSize: 15.5, fontWeight: 700, textDecoration: e.done ? "line-through" : "none", color: e.done ? C.dim : C.text, lineHeight: 1.25 }}>{day.title}</div>
+                              <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{day.detail}</div>
+                            </div>
+                            {isToday
+                              ? <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>TODAY</span>
+                              : day.km > 0
+                                ? <span className="num" style={{ fontSize: 12, fontWeight: 700, color: e.done ? col : C.dim2, flexShrink: 0 }}>{day.km}<span style={{ fontSize: 9, color: C.dim2 }}>km</span></span>
+                                : <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.rest, flexShrink: 0 }}>REST</span>}
                           </div>
 
                           {isOpen && (
@@ -1826,10 +2068,25 @@ export default function App() {
               );
             })}
 
-            <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: 13, fontSize: 12, lineHeight: 1.5, color: C.dim, marginBottom: 14 }}>
+            <button onClick={() => { setTipsOpen((o) => !o); haptic(6); }} className="card tap"
+              style={{ width: "100%", textAlign: "left", padding: "13px 15px", marginBottom: 10, borderRadius: 16, color: C.text, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}>
+              <span style={{ color: C.accent, display: "flex" }}><Icon name="target" size={16} /></span>
+              Beat the side stitch
+              <span style={{ marginLeft: "auto", color: C.dim, fontWeight: 700 }}>{tipsOpen ? "▾" : "▸"}</span>
+            </button>
+            {tipsOpen && (
+              <div className="rise card" style={{ borderRadius: 16, padding: "14px 16px", marginBottom: 12, fontSize: 13, lineHeight: 1.6, color: C.dim }}>
+                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>Belly breathing.</b> Deep into your stomach, not shallow into the chest — your #1 weapon.</p>
+                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>Exhale on the opposite foot</b> to the stitch side.</p>
+                <p style={{ margin: "0 0 7px" }}><b style={{ color: C.text }}>No food 2–3h before.</b> Don't chug water right before either.</p>
+                <p style={{ margin: 0 }}><b style={{ color: C.text }}>Slow down</b> to a pace where you could still talk.</p>
+              </div>
+            )}
+
+            <div className="card" style={{ borderRadius: 16, padding: "13px 15px", fontSize: 12, lineHeight: 1.55, color: C.dim, marginBottom: 14 }}>
               <b style={{ color: C.text }}>Listen to your body.</b> Muscle soreness = normal. Sharp joint or shin pain = stop and rest 1–2 days. Don't arrive injured.
             </div>
-            <button onClick={reset} className="chip" style={{ fontSize: 11 }}>Reset all progress</button>
+            <button onClick={reset} className="chip tap" style={{ fontSize: 11 }}>Reset all progress</button>
           </div>
         )}
 
@@ -1863,6 +2120,7 @@ export default function App() {
             defaultKey={trackDefaultKey}
             targetRoute={selectedCustomRoute}
             onSave={saveTrackedRun}
+            onShare={(run) => openShare({ kind: "run", data: run })}
             onClose={() => setTrackerOpen(false)}
           />
         </ErrorBoundary>
@@ -1880,6 +2138,10 @@ export default function App() {
 
       {replayRun && (
         <RouteReplay run={replayRun} onClose={() => setReplayRun(null)} />
+      )}
+
+      {shareSpec && (
+        <ShareSheet spec={shareSpec} onClose={() => setShareSpec(null)} onToast={setToast} />
       )}
     </div>
   );
