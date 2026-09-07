@@ -16,20 +16,31 @@ const HealthConnect = registerPlugin("HealthConnect");
 
 export const healthSupported = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 
-// Health Connect exercise type ids (androidx.health.connect ExerciseSessionRecord).
-// Only the foot-borne ones belong in a running log; a cycle ride logged as
-// "12 km" would quietly wreck every pace figure and race prediction.
+// Health Connect exercise type ids (androidx.health.connect ExerciseSessionRecord),
+// each tagged with what it is rather than a single "importable" flag.
+//
+// The distinction earns its keep because Samsung Health records walking *by
+// itself*: a stroll to the shops becomes an exercise session with no input from
+// the user. Importing those as runs buries real training under noise and — worse
+// — a long amble becomes the "longest run" that race readiness is measured
+// against. So walks are a separate kind, off by default, and never counted as
+// running even when the user does want them logged.
+//
+// Anything not listed is not foot-borne and is never imported: a cycle ride
+// logged as "24 km" would wreck every pace figure and race prediction.
 export const EXERCISE_TYPES = {
-  56: { name: "Running", run: true },
-  57: { name: "Treadmill run", run: true },
-  79: { name: "Walking", run: true },
-  37: { name: "Hiking", run: true },
-  8:  { name: "Boot camp", run: false },
-  13: { name: "Cycling", run: false },
-  14: { name: "Stationary bike", run: false },
+  56: { name: "Running", kind: "run" },
+  57: { name: "Treadmill run", kind: "run" },
+  79: { name: "Walking", kind: "walk" },
+  37: { name: "Hiking", kind: "walk" },
+  8:  { name: "Boot camp", kind: null },
+  13: { name: "Cycling", kind: null },
+  14: { name: "Stationary bike", kind: null },
 };
 
-export const isRunLike = (type) => EXERCISE_TYPES[type]?.run === true;
+export const exerciseKind = (type) => EXERCISE_TYPES[type]?.kind || null;
+export const isRunLike = (type) => exerciseKind(type) === "run";
+export const isWalkLike = (type) => exerciseKind(type) === "walk";
 export const exerciseName = (type, title) => title || EXERCISE_TYPES[type]?.name || "Workout";
 
 // --- native calls ----------------------------------------------------------
@@ -47,7 +58,7 @@ export async function healthAvailability() {
 export async function healthPermissionGranted() {
   if (!healthSupported()) return false;
   try {
-    const { granted } = await HealthConnect.checkPermissions();
+    const { granted } = await HealthConnect.checkHealthPermissions();
     return !!granted;
   } catch { return false; }
 }
@@ -55,7 +66,7 @@ export async function healthPermissionGranted() {
 export async function requestHealthPermission() {
   if (!healthSupported()) return false;
   try {
-    const { granted } = await HealthConnect.requestPermissions();
+    const { granted } = await HealthConnect.requestHealthPermissions();
     return !!granted;
   } catch { return false; }
 }
@@ -71,7 +82,12 @@ export async function readWorkouts(days = 30) {
   const endTime = Date.now();
   const startTime = endTime - days * 86400000;
   try {
-    const { workouts } = await HealthConnect.readWorkouts({ startTime, endTime });
+    // Strings, not numbers: an epoch millisecond's Java type on the other side
+    // depends on how org.json parses it, and Capacitor's getLong/getDouble each
+    // accept only one of those types. See the note in HealthConnectPlugin.kt.
+    const { workouts } = await HealthConnect.readWorkouts({
+      startTime: String(startTime), endTime: String(endTime),
+    });
     return (workouts || []).slice().sort((a, b) => b.startTime - a.startTime);
   } catch { return []; }
 }
@@ -101,6 +117,9 @@ export function workoutToEntry(w) {
     min,
     date: new Date(w.startTime).toISOString(),
     imported: true,
+    // "run" or "walk". Stats that only make sense for running — pace, longest
+    // run, race predictions — read this and leave walks out.
+    activity: exerciseKind(w.exerciseType) || "run",
     hcId: w.id,
     hcSource: w.source || null,
     ...(w.kcal > 0 ? { kcal: Math.round(w.kcal) } : {}),
@@ -143,7 +162,7 @@ export function chooseDayKey(w, { flat, log, startDate, taken = new Set() }) {
  * itself (a GPS run and its Samsung Health copy are the same run twice), and
  * anything too short to be a session.
  */
-export function planImport(workouts, { flat, log, startDate, minMinutes = 3 }) {
+export function planImport(workouts, { flat, log, startDate, minMinutes = 3, minKm = 0.3, includeWalks = false }) {
   const importedIds = new Set(
     Object.values(log || {}).map((e) => e && e.hcId).filter(Boolean)
   );
@@ -162,9 +181,18 @@ export function planImport(workouts, { flat, log, startDate, minMinutes = 3 }) {
     const when = new Date(w.startTime);
     const minutes = (w.endTime - w.startTime) / 60000;
 
-    if (!isRunLike(w.exerciseType)) { skipped.push({ w, label, when, reason: "not a run or walk" }); continue; }
+    const kind = exerciseKind(w.exerciseType);
+    if (!kind) { skipped.push({ w, label, when, reason: "not a run or walk" }); continue; }
+    if (kind === "walk" && !includeWalks) {
+      skipped.push({ w, label, when, reason: "walk — your watch logs these on its own" });
+      continue;
+    }
     if (importedIds.has(w.id)) { skipped.push({ w, label, when, reason: "already imported" }); continue; }
     if (minutes < minMinutes) { skipped.push({ w, label, when, reason: "too short" }); continue; }
+    // A session with no distance worth the name is a detection artefact, not
+    // training — and it would land on a plan day as a completed session.
+    const km = (w.distanceM || 0) / 1000;
+    if (km > 0 && km < minKm) { skipped.push({ w, label, when, reason: "too short" }); continue; }
     if (trackedStarts.some((t) => Math.abs(t - w.startTime) < 15 * 60000)) {
       skipped.push({ w, label, when, reason: "Stride already tracked this run" });
       continue;
@@ -173,7 +201,7 @@ export function planImport(workouts, { flat, log, startDate, minMinutes = 3 }) {
     if (!key) { skipped.push({ w, label, when, reason: "no free day left in the plan" }); continue; }
 
     taken.add(key);
-    ready.push({ w, key, label, when, entry: workoutToEntry(w) });
+    ready.push({ w, key, label, when, kind, entry: workoutToEntry(w) });
   }
 
   return { ready, skipped };
