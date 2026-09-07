@@ -398,21 +398,76 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
                 {hr.status !== "connected" && hr.status !== "connecting" && hr.status !== "reconnecting" && (
                   <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                     {hr.hasSavedDevice && (
-                      <button onClick={() => { hr.connect({ silent: false }); haptic(6); }}
+                      <button onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ silent: false }); haptic(6); }}
                         style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
                         Pick a different device
                       </button>
                     )}
-                    {/* A filtered scan can't tell "your watch isn't broadcasting"
-                        apart from "the scan is broken" — both look like an empty
-                        list. This drops the filter so you can see what Bluetooth
-                        actually sees, and point the app straight at the watch. */}
-                    <button onClick={() => { hr.connect({ anyDevice: true }); haptic(6); }}
+                    {/* A scan only ever sees devices that are ADVERTISING, and a
+                        watch bonded to the phone has stopped advertising — which
+                        is why dropping the service filter still found nothing.
+                        Natively this lists the phone's paired devices too, so
+                        the watch can be pointed at directly. */}
+                    <button onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ anyDevice: true }); haptic(6); }}
                       style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
-                      Show every nearby device
+                      {hr.canPickFromList ? "Show paired & nearby devices" : "Show every nearby device"}
                     </button>
                   </div>
                 )}
+
+                {/* The device list: paired first, because that is where a watch
+                    actually lives. */}
+                {(hr.scanning || hr.devices.length > 0) && hr.status !== "connected" && (
+                  <div className="rise" style={{ marginTop: 10, background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 10, letterSpacing: 1.6, fontWeight: 800, color: C.dim }}>
+                        {hr.scanning ? "LOOKING…" : "DEVICES"}
+                      </span>
+                      {hr.scanning && (
+                        <span className="spin" style={{
+                          width: 11, height: 11, borderRadius: "50%",
+                          border: `2px solid ${tint(C.accent, .25)}`, borderTopColor: C.accent,
+                        }} />
+                      )}
+                      <button onClick={() => { hr.scanning ? hr.stopScan() : hr.startScan({ anyDevice: true }); haptic(5); }}
+                        style={{ marginLeft: "auto", background: "none", border: "none", color: C.accent, fontSize: 10.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        {hr.scanning ? "Stop" : "Scan again"}
+                      </button>
+                    </div>
+
+                    {hr.devices.length === 0 ? (
+                      <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.55 }}>
+                        Nothing yet. If your watch is paired to this phone it should appear here even
+                        while it isn't broadcasting — if it doesn't, pair it in Android's Bluetooth
+                        settings first.
+                      </div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {hr.devices.map((d) => (
+                          <button key={d.id} onClick={() => { hr.connect({ deviceId: d.id, deviceName: d.name || "That device" }); haptic(8); }}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 10, textAlign: "left", cursor: "pointer",
+                              background: C.surface, border: `1px solid ${C.line}`, borderRadius: 11,
+                              padding: "10px 12px", color: C.text, width: "100%",
+                            }}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {d.name || "Unnamed device"}
+                              </span>
+                              <span style={{ display: "block", fontSize: 10, color: C.dim2, marginTop: 2 }}>
+                                {d.source === "scan" ? `broadcasting now${d.rssi != null ? ` · ${d.rssi} dBm` : ""}`
+                                  : d.source === "connected" ? "connected to this phone"
+                                    : "paired to this phone"}
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 10.5, fontWeight: 800, color: C.accent, flexShrink: 0 }}>Connect</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {hr.error && (
                   <div className="rise" onClick={hr.dismissError} style={{
                     marginTop: 8, borderRadius: 10, padding: "9px 11px", fontSize: 11, lineHeight: 1.5,
@@ -422,10 +477,12 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
                 )}
                 <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
                   Works with any Bluetooth heart-rate strap or band.{" "}
-                  <b style={{ color: C.dim }}>Galaxy Watch:</b> Samsung watches don't broadcast heart
-                  rate on their own — the watch has to be running an HR-broadcast app, and on the
-                  Tizen watches (Watch 3 and older) those can no longer be installed from the Galaxy
-                  Store. If you already have one, start it on the watch first, then connect here.
+                  <b style={{ color: C.dim }}>Can't see your watch?</b> A scan only finds devices
+                  that are broadcasting, and a watch paired to this phone usually isn't — so it is
+                  listed from your paired devices instead. Tap it and Stride will tell you straight
+                  whether it can send a pulse. Samsung watches only can while an HR-broadcast app is
+                  running on the watch itself, and on the Tizen watches (Watch 3 and older) those can
+                  no longer be installed.
                 </div>
               </div>
             )}

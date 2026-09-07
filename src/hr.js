@@ -10,9 +10,19 @@
 // The UI must not promise a store trip that cannot be made — see the copy in
 // RunTracker.
 //
+// A scan only ever sees devices that are ADVERTISING. A watch that is paired
+// and connected to the phone (through its companion app) generally stops
+// advertising altogether, so no scan — filtered by the heart-rate service or
+// not — can see it. That is why "it doesn't detect my watch" was still the
+// outcome with the service filter dropped. On Android the paired devices are
+// listed from the bond table instead (`getBondedDevices`), so the watch can be
+// pointed at directly; connecting then gives a definitive answer about whether
+// it has a pulse to give.
+//
 // @capacitor-community/bluetooth-le gives the same API on both platforms:
 // Web Bluetooth in the browser (Chrome/Android, HTTPS) and native BLE in the
-// Android app.
+// Android app. The browser owns its own device chooser and exposes neither the
+// bond table nor a free scan, so the list picker is native-only.
 import { useState, useRef, useCallback, useEffect } from "react";
 import { loadSettings, saveSettings } from "./storage.js";
 import { isNative } from "./native.js";
@@ -69,6 +79,8 @@ export function useHeartRate() {
   // opening the picker. Read once, not on every render — RunTracker re-renders
   // four times a second while a run is being tracked.
   const [hasSavedDevice, setHasSavedDevice] = useState(() => !!loadSettings().hrDeviceId);
+  const [devices, setDevices] = useState([]);       // what the picker is showing
+  const [scanning, setScanning] = useState(false);
 
   const deviceId = useRef(null);
   const bleRef = useRef(null);
@@ -76,6 +88,8 @@ export function useHeartRate() {
   const retryTimer = useRef(null);
   const retries = useRef(0);
   const retryRef = useRef(null);     // filled in below; the drop handler calls it
+  const scanTimer = useRef(null);
+  const seen = useRef(new Map());
 
   const clearRetry = () => { clearTimeout(retryTimer.current); retryTimer.current = null; };
 
@@ -135,13 +149,10 @@ export function useHeartRate() {
   // guess into an answer: either it works, or the connection succeeds and the
   // heart-rate characteristic is missing, which says plainly that the device
   // has no pulse to give.
-  const connect = useCallback(async ({ silent = false, anyDevice = false } = {}) => {
-    setError(null);
-    setStatus("connecting");
-    keepAlive.current = true;
-    retries.current = 0;
-    clearRetry();
-
+  // Loads the plugin, asks for permissions, and makes sure the radio is on.
+  // Shared by the picker and by connecting, because "nothing was detected" is
+  // usually one of these three failing rather than an absent device.
+  const ensureBle = useCallback(async () => {
     let BleClient;
     try {
       ({ BleClient } = await import("@capacitor-community/bluetooth-le"));
@@ -150,10 +161,8 @@ export function useHeartRate() {
       // if either is refused), so this is where a permission problem surfaces.
       await BleClient.initialize({ androidNeverForLocation: true });
     } catch (e) {
-      keepAlive.current = false;
-      setStatus("idle");
       setError(readableError(e));
-      return false;
+      return null;
     }
 
     // A powered-down radio is the commonest cause of "it just doesn't work",
@@ -173,17 +182,103 @@ export function useHeartRate() {
         on = await BleClient.isEnabled();
       }
       if (!on) {
-        keepAlive.current = false;
-        setStatus("idle");
         setError("Bluetooth is switched off — turn it on and try again.");
-        return false;
+        return null;
       }
     } catch { /* isEnabled is not available everywhere — carry on and let connect fail */ }
+
+    return BleClient;
+  }, []);
+
+  const stopScan = useCallback(async () => {
+    clearTimeout(scanTimer.current);
+    scanTimer.current = null;
+    setScanning(false);
+    try { await bleRef.current?.stopLEScan(); } catch { /* not scanning */ }
+  }, []);
+
+  // Builds the picker list: paired devices from the bond table, anything
+  // already connected that offers heart rate, and whatever a live scan turns
+  // up. Paired comes first because that is where a watch actually is — it is
+  // bonded to the phone and therefore not advertising for a scan to find.
+  const startScan = useCallback(async ({ anyDevice = false, seconds = 15 } = {}) => {
+    setError(null);
+    await stopScan();
+    seen.current = new Map();
+    setDevices([]);
+
+    const BleClient = await ensureBle();
+    if (!BleClient) return false;
+
+    const add = (d) => {
+      if (!d?.id) return;
+      const prev = seen.current.get(d.id);
+      // A device found by the scan is worth more than the same one from the
+      // bond table: the scan proves it is switched on and in range right now.
+      seen.current.set(d.id, {
+        ...prev, ...d,
+        name: d.name || prev?.name || null,
+        source: prev?.source === "scan" ? "scan" : d.source,
+      });
+      setDevices([...seen.current.values()].sort((a, b) =>
+        (a.source === "scan" ? 0 : 1) - (b.source === "scan" ? 0 : 1) ||
+        String(a.name || "\uffff").localeCompare(String(b.name || "\uffff"))));
+    };
+
+    // getBondedDevices resolves to {} on the web, so guard the array.
+    try {
+      for (const d of (await BleClient.getBondedDevices()) || []) {
+        add({ id: d.deviceId, name: d.name, source: "paired" });
+      }
+    } catch { /* Android-only; fine to skip */ }
+    try {
+      for (const d of (await BleClient.getConnectedDevices([HR_SERVICE])) || []) {
+        add({ id: d.deviceId, name: d.name, source: "connected" });
+      }
+    } catch { /* not supported everywhere */ }
+
+    setScanning(true);
+    try {
+      await BleClient.requestLEScan(
+        anyDevice ? { allowDuplicates: false } : { services: [HR_SERVICE] },
+        (r) => add({
+          id: r.device?.deviceId,
+          name: r.device?.name || r.localName || null,
+          source: "scan",
+          rssi: r.rssi,
+        }),
+      );
+    } catch (e) {
+      setScanning(false);
+      setError(readableError(e));
+      return false;
+    }
+    // Scanning forever drains the battery and never becomes more informative.
+    scanTimer.current = setTimeout(() => { stopScan(); }, seconds * 1000);
+    return true;
+  }, [ensureBle, stopScan]);
+
+  const connect = useCallback(async ({ silent = false, anyDevice = false, deviceId: pickedId, deviceName: pickedName } = {}) => {
+    setError(null);
+    setStatus("connecting");
+    keepAlive.current = true;
+    retries.current = 0;
+    clearRetry();
+    await stopScan();
+
+    const BleClient = await ensureBle();
+    if (!BleClient) { keepAlive.current = false; setStatus("idle"); return false; }
 
     try {
       const saved = loadSettings();
       let id, name;
-      if (silent && saved.hrDeviceId) {
+      if (pickedId) {
+        // Chosen from our own list (native): a paired watch, or a scan hit.
+        id = pickedId;
+        name = pickedName || "That device";
+        saveSettings({ ...loadSettings(), hrDeviceId: id, hrDeviceName: name });
+        setHasSavedDevice(true);
+      } else if (silent && saved.hrDeviceId) {
         id = saved.hrDeviceId;
         name = saved.hrDeviceName || "Heart rate monitor";
       } else {
@@ -230,11 +325,15 @@ export function useHeartRate() {
     setHasSavedDevice(false);
   }, []);
 
-  useEffect(() => () => { keepAlive.current = false; clearRetry(); disconnect(); }, [disconnect]);
+  useEffect(() => () => { keepAlive.current = false; clearRetry(); clearTimeout(scanTimer.current); disconnect(); }, [disconnect]);
 
   return {
     status, bpm, deviceName, error, hasSavedDevice,
+    devices, scanning, startScan, stopScan,
     connect, disconnect, forgetDevice,
+    // The browser insists on showing its own device chooser and exposes neither
+    // the bond table nor a free scan, so the in-app list is native-only.
+    canPickFromList: isNative(),
     dismissError: () => setError(null),
   };
 }

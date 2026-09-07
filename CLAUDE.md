@@ -395,6 +395,16 @@ front — the other headline reason to go native.
   one tap, and a dropped link **auto-reconnects** (15 tries, 4 s apart) because a
   watch broadcast app blinks constantly; the HR row stays on screen while
   reconnecting so the layout does not jump mid-run.
+  **A scan only ever sees devices that are advertising**, and a watch bonded to
+  the phone has stopped advertising — which is why "it doesn't detect my watch"
+  survived dropping the service filter. Natively the picker is built in-app
+  (`startScan`) from three sources: `getBondedDevices()` (the bond table, where a
+  paired watch actually is), `getConnectedDevices([HR_SERVICE])`, and a live
+  `requestLEScan`, merged by device id with a scan hit outranking a bond-table
+  entry and each row labelled with where it came from. The scan stops itself
+  after 15 s. On the web the browser owns its chooser and exposes neither the
+  bond table nor a free scan, so `canPickFromList` is false there and
+  `requestDevice` is still used.
   **Samsung watches do not broadcast heart rate on their own** — no HR profile,
   on Tizen or Wear OS — so a Galaxy Watch only appears as a monitor while it runs
   a third-party broadcast app. On the Tizen watches (Watch 3 and earlier) those
