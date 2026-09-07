@@ -1,7 +1,9 @@
 import React from "react";
 import { C, tint } from "../data.js";
 
-// Inline SVG icons so we don't pull in an icon library.
+// Inline SVG icons so we don't pull in an icon library. Each has a `fill`
+// companion path used only while the tab is active — a filled icon is how a
+// native tab bar says "you are here" before you have read the label.
 const ICONS = {
   plan: (
     <><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></>
@@ -17,28 +19,39 @@ const ICONS = {
   ),
 };
 
-const ITEMS = ["plan", "stats", "coach", "history"];
+const ITEMS = [
+  { id: "plan", label: "Plan" },
+  { id: "stats", label: "Stats" },
+  { id: "coach", label: "Coach" },
+  { id: "history", label: "History" },
+];
 
 // A floating dock rather than a full-width bar: it reads as a control that
 // sits above the page instead of a slab welded to the bottom of the screen.
 // The accent pill slides between tabs, so the active state is a movement.
 export function BottomNav({ tab, onChange }) {
-  const index = Math.max(0, ITEMS.indexOf(tab));
+  const index = Math.max(0, ITEMS.findIndex((i) => i.id === tab));
   return (
     <nav style={{
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
       padding: "0 14px calc(12px + env(safe-area-inset-bottom))",
       pointerEvents: "none",
     }}>
+      {/* a short fade under the dock so content scrolls out of sight rather
+          than being sliced off by the dock's own edge */}
+      <div aria-hidden="true" style={{
+        position: "absolute", left: 0, right: 0, bottom: 0, height: 116, zIndex: -1,
+        background: `linear-gradient(to top, ${C.bg} 32%, ${tint(C.bg, 0)})`,
+      }} />
       <div style={{
         pointerEvents: "auto",
         maxWidth: 420, margin: "0 auto", position: "relative",
-        display: "flex", padding: 6, borderRadius: 22,
-        background: "rgba(13,15,19,.82)",
-        backdropFilter: "blur(18px)",
-        WebkitBackdropFilter: "blur(18px)",
+        display: "flex", padding: 6, borderRadius: 23,
+        background: "rgba(11,13,17,.86)",
+        backdropFilter: "blur(22px) saturate(160%)",
+        WebkitBackdropFilter: "blur(22px) saturate(160%)",
         border: `1px solid ${C.line}`,
-        boxShadow: `0 18px 40px -18px rgba(0,0,0,.95), inset 0 1px 0 ${tint(C.text, 0.05)}`,
+        boxShadow: `0 20px 44px -20px rgba(0,0,0,.98), inset 0 1px 0 ${tint(C.text, 0.06)}`,
       }}>
         {/* sliding highlight behind the active tab */}
         <span aria-hidden="true" style={{
@@ -46,27 +59,29 @@ export function BottomNav({ tab, onChange }) {
           width: `calc((100% - 12px) / ${ITEMS.length})`,
           transform: `translateX(${index * 100}%)`,
           borderRadius: 17,
-          background: `linear-gradient(150deg,${tint(C.accent, .2)},${tint(C.accent2, .1)})`,
-          border: `1px solid ${tint(C.accent, .38)}`,
+          background: `linear-gradient(150deg,${tint(C.accent, .22)},${tint(C.accent2, .1)})`,
+          border: `1px solid ${tint(C.accent, .4)}`,
+          boxShadow: `0 6px 18px -10px ${C.accent}`,
           transition: "transform .32s cubic-bezier(.3,1.3,.5,1)",
         }} />
-        {ITEMS.map((t) => {
-          const active = tab === t;
+        {ITEMS.map((it) => {
+          const active = tab === it.id;
           const color = active ? C.accent : C.dim;
           return (
-            <button key={t} onClick={() => onChange(t)}
+            <button key={it.id} onClick={() => onChange(it.id)} aria-current={active ? "page" : undefined}
               style={{
                 position: "relative", zIndex: 1,
                 flex: 1, background: "none", border: "none", cursor: "pointer",
-                padding: "9px 0 8px", display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 4, color,
+                padding: "10px 0 9px", display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 5, color,
                 transition: "color .2s ease",
               }}>
               <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke={color}
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                {ICONS[t]}
+                strokeWidth={active ? 2.3 : 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                style={{ transition: "stroke-width .2s ease", filter: active ? `drop-shadow(0 0 6px ${tint(C.accent, .55)})` : "none" }}>
+                {ICONS[it.id]}
               </svg>
-              <span style={{ fontSize: 10, fontWeight: active ? 800 : 600, textTransform: "capitalize", letterSpacing: 0.2 }}>{t}</span>
+              <span style={{ fontSize: 9.5, fontWeight: active ? 800 : 600, letterSpacing: 0.3 }}>{it.label}</span>
             </button>
           );
         })}
