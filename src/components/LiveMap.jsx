@@ -6,6 +6,7 @@ import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
+import { cachedTileLayer } from "../tiles.js";
 
 const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
@@ -62,7 +63,9 @@ export function LiveMap({ points, ghost, height = 200, follow = false, interacti
         boxZoom: false,
         keyboard: false,
       });
-      L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
+      // Cached tiles: a route somewhere without signal still gets its streets,
+      // as long as they have been looked at once before.
+      cachedTileLayer(L, TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
       map.setView([0, 0], 2);
       mapRef.current = map;
     } catch (e) {
@@ -163,11 +166,11 @@ export function LiveMap({ points, ghost, height = 200, follow = false, interacti
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 18, height: 3, background: C.accent, borderRadius: 2, display: "inline-block" }} />
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.accent }}>RUN</span>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: C.accent }}>RUN</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 18, height: 3, background: C.easy, borderRadius: 2, display: "inline-block" }} />
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.easy }}>WALK</span>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: C.easy }}>WALK</span>
           </div>
         </div>
       )}

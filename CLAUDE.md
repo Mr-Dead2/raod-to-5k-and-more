@@ -321,6 +321,16 @@ front — the other headline reason to go native.
   80% of it beyond). Settings keys `goalRace` and `goalDate`; the Stats tab has
   the goal picker and the prediction board, and the Plan tab shows a countdown
   strip when a race date is set. Pure functions with no React — keep it that way.
+- **Offline map tiles (`src/tiles.js`).** Tiles come from CARTO over the
+  network, so a run without signal drew the accent polyline on a blank
+  background — exactly where a map is most wanted. `cachedTileLayer(L, ...)`
+  is a `L.TileLayer` subclass whose `createTile` goes through Cache Storage
+  first, so streets you have already looked at are there offline. Used by
+  `LiveMap`, `RouteMaker` and `RouteReplay`. Bounded to `MAX_TILES`
+  (oldest-first), and **every failure falls back to the plain network URL**
+  Leaflet would have used anyway — a quota error, private mode or a missing
+  Cache Storage costs you nothing. Object URLs are revoked when Leaflet
+  removes the tile.
 - **Backup safety net (`src/backup.js`).** Everything lives in `localStorage`
   on one device, so a cleared cache or a lost phone takes the lot; export
   existed but was manual and unreminded, which made it a safety net only for
@@ -377,6 +387,12 @@ front — the other headline reason to go native.
   optional `startDate` (a `YYYY-MM-DD` string) maps each plan day to a calendar
   date; `todayIndexOf`/`dateForDay` in `App.jsx` derive today's flat index, the
   header countdown, the per-row `TODAY` badge, and the `StreakGrid` cells.
+  **A day's `d` (MON..SUN) is its position in the training week, not a calendar
+  weekday** — a block can start on any day, so the label routinely disagreed
+  with the phone's own calendar. Wherever a start date is set, plan rows and
+  the hero show the real weekday and date from `dateForDay()` instead, and the
+  coach summary flags `dayLabelsArePlanSlots` so the model does not talk about
+  "your Wednesday run".
 - **Achievements + celebrations.** `src/achievements.js` holds badge definitions
   with pure `test(ctx)` predicates over a stats snapshot; App memoises the
   unlocked set and shows a toast (with `haptic`) when a new one appears.

@@ -9,7 +9,7 @@ export function StreakGrid({ cells }) {
     <div style={{ display: "grid", gap: 8 }}>
       {rows.map((r) => (
         <div key={r} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 22, fontSize: 9, fontWeight: 700, color: C.dim }}>W{r + 1}</span>
+          <span style={{ width: 22, fontSize: 10, fontWeight: 700, color: C.dim }}>W{r + 1}</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, flex: 1 }}>
             {cells.slice(r * 7, r * 7 + 7).map((c, i) => {
               // Done = filled in the session colour. Today = accent ring.

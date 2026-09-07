@@ -81,7 +81,7 @@ export function BottomNav({ tab, onChange }) {
                 style={{ transition: "stroke-width .2s ease", filter: active ? `drop-shadow(0 0 6px ${tint(C.accent, .55)})` : "none" }}>
                 {ICONS[it.id]}
               </svg>
-              <span style={{ fontSize: 9.5, fontWeight: active ? 800 : 600, letterSpacing: 0.3 }}>{it.label}</span>
+              <span style={{ fontSize: 10, fontWeight: active ? 800 : 600, letterSpacing: 0.3 }}>{it.label}</span>
             </button>
           );
         })}

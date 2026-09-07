@@ -5,6 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
 import { haptic } from "../celebrate.js";
+import { cachedTileLayer } from "../tiles.js";
 
 const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
@@ -55,7 +56,7 @@ export function RouteReplay({ run, onClose }) {
   useEffect(() => {
     if (!elRef.current) return;
     const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, scrollWheelZoom: true, dragging: true });
-    L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
+    cachedTileLayer(L, TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
     mapRef.current = map;
 
     if (route && route.length > 1) {
@@ -139,7 +140,7 @@ export function RouteReplay({ run, onClose }) {
         ].map(({ label, value }) => (
           <div key={label} style={{ textAlign: "center" }}>
             <div className="num" style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
-            <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1.5, marginTop: 2 }}>{label}</div>
+            <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1.5, marginTop: 2 }}>{label}</div>
           </div>
         ))}
       </div>

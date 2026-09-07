@@ -14,6 +14,7 @@ import {
   loadNetwork, nearestNode, buildLoop, buildOutBack, snapWaypoints,
   radiusForTarget, haversineKm,
 } from "../routing.js";
+import { cachedTileLayer } from "../tiles.js";
 
 // Dark basemap matching the rest of the app (free, no API key).
 const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -118,7 +119,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
     let map;
     try {
       map = L.map(elRef.current, { zoomControl: false, attributionControl: true });
-      L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
+      cachedTileLayer(L, TILES, { attribution: ATTR, maxZoom: 19, subdomains: "abcd" }).addTo(map);
       map.setView(userLoc ? [userLoc.lat, userLoc.lng] : [51.505, -0.09], userLoc ? 15 : 13);
       mapRef.current = map;
     } catch (e) {
@@ -458,16 +459,16 @@ export function RouteMaker({ onClose, onSelectRoute }) {
           <div style={{ ...overlayPill, position: "absolute", top: 12, left: 12, right: 12, zIndex: 500, padding: "8px 12px" }}>
             <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
               <div>
-                <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE</div>
+                <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE</div>
                 <div className="num" style={{ fontSize: 18, fontWeight: 700, color: C.accent }}>{totalKm.toFixed(2)} km</div>
               </div>
               <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 12 }}>
-                <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>EST. TIME</div>
+                <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>EST. TIME</div>
                 <div className="num" style={{ fontSize: 16, fontWeight: 700 }}>~{estMinutes} min</div>
               </div>
               {route && (
                 <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 12 }}>
-                  <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>ON PATHS</div>
+                  <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>ON PATHS</div>
                   <div className="num" style={{ fontSize: 16, fontWeight: 700 }}>{route.pathPct}%</div>
                 </div>
               )}

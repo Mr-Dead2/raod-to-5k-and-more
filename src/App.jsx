@@ -155,8 +155,11 @@ const Label = ({ children, right }) => (
     {right != null && <span style={{ marginLeft: "auto" }}>{right}</span>}
   </div>
 );
-const Bar = ({ pct }) => (
-  <div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+const Bar = ({ pct, label }) => (
+  <div className="bar" role="progressbar" aria-label={label}
+    aria-valuenow={Math.round(Math.max(0, Math.min(100, pct)))} aria-valuemin={0} aria-valuemax={100}>
+    <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+  </div>
 );
 // Every tab opens with the same shape: a big title, a line of context, and
 // an optional action on the right. That repetition is most of what makes a
@@ -175,10 +178,10 @@ const Screen = ({ title, sub, action }) => (
 const Segmented = ({ items, value, onChange }) => {
   const i = Math.max(0, items.findIndex((x) => x.id === value));
   return (
-    <div className="seg" style={{ marginBottom: 16 }}>
+    <div className="seg" role="tablist" style={{ marginBottom: 16 }}>
       <i style={{ width: `calc((100% - 8px) / ${items.length})`, transform: `translateX(${i * 100}%)` }} />
       {items.map((x) => (
-        <button key={x.id} className={value === x.id ? "on" : ""}
+        <button key={x.id} className={value === x.id ? "on" : ""} role="tab" aria-selected={value === x.id}
           onClick={() => { onChange(x.id); haptic(5); }}>{x.label}</button>
       ))}
     </div>
@@ -191,7 +194,7 @@ const Tile = ({ label, value, unit, sub, hero, color, delay = 0 }) => (
       <span className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 28, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</span>
       {unit && <span className="num" style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>{unit}</span>}
     </div>
-    <div style={{ fontSize: 9.5, letterSpacing: 1.4, color: C.dim, marginTop: 9, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
+    <div style={{ fontSize: 10, letterSpacing: 1.4, color: C.dim, marginTop: 9, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
     {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
   </div>
 );
@@ -269,6 +272,7 @@ export default function App() {
   // stopwatch
   const [swMs, setSwMs] = useState(0);
   const [swRun, setSwRun] = useState(false);
+  const [swKm, setSwKm] = useState("");
   const swRef = useRef(null);
 
   useEffect(() => {
@@ -413,6 +417,24 @@ export default function App() {
   };
 
   const reset = () => { persist({}); setOpen(null); haptic(10); };
+
+  // Save the stopwatch as a real session. The clock knows the time; the
+  // treadmill knows the distance, so the runner supplies that and nothing has
+  // to be retyped on the Plan tab.
+  const saveStopwatch = () => {
+    const km = parseFloat(swKm);
+    if (!(km > 0) || !swDefault) return;
+    update(swDefault.key, {
+      done: true,
+      km: Number(km.toFixed(2)),
+      min: Number((swMs / 60000).toFixed(1)),
+      durMs: swMs,
+      treadmill: true,
+    });
+    setSwMs(0); setSwRun(false); setSwKm("");
+    setToast({ icon: "🏃", title: `Saved to ${swDefault.title}`, label: "TREADMILL" });
+    setTab("history");
+  };
 
   const saveStart = (d) => { setStartDate(d); saveSettings({ ...loadSettings(), startDate: d }); haptic(8); };
 
@@ -969,6 +991,7 @@ export default function App() {
   const pctShown = Math.round(useCountUp(pct));
   const kmShown = useCountUp(stats.kmLogged);
   const nextUp = FLAT.find((f) => !(log[f.key] && log[f.key].done));
+  const swDefault = nextUp || null;
 
   // which session a tracked run defaults to saving into
   const todayKey = startDate && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx].key : null;
@@ -1227,7 +1250,7 @@ export default function App() {
             <Mark />
             <div style={{ minWidth: 0 }}>
               <div className="disp" style={{ fontSize: 18.5, fontWeight: 700, lineHeight: 1, letterSpacing: -0.4 }}>Stride</div>
-              <div style={{ fontSize: 9, letterSpacing: 1.8, color: C.dim, fontWeight: 800, marginTop: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{eyebrow}</div>
+              <div style={{ fontSize: 10, letterSpacing: 1.8, color: C.dim, fontWeight: 800, marginTop: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{eyebrow}</div>
             </div>
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 9 }}>
               <button onClick={() => openShare(progressShareSpec())} className="card tap" aria-label="Share my progress"
@@ -1249,7 +1272,7 @@ export default function App() {
                     strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pctShown / 100)}
                     style={{ transition: "stroke-dashoffset .45s cubic-bezier(.2,.8,.2,1)", filter: `drop-shadow(0 0 5px ${tint(C.accent, .55)})` }} />
                 </svg>
-                <span className="num" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: C.text }}>{pctShown}</span>
+                <span className="num" aria-hidden="true" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: C.text }}>{pctShown}</span>
               </button>
             </div>
           </div>
@@ -1287,7 +1310,7 @@ export default function App() {
                   <span className="num gtext" style={{ fontSize: 52, fontWeight: 700, lineHeight: 1 }}>{fmtDistNum(kmShown, 1)}</span>
                   <span className="num" style={{ fontSize: 18, fontWeight: 700, color: C.dim }}>{U.short}</span>
                 </div>
-                <Bar pct={pct} />
+                <Bar pct={pct} label="Plan completion" />
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, fontSize: 11.5, color: C.dim, fontWeight: 600 }}>
                   <span>{stats.done} of {TOTAL} sessions</span>
                   <span className="num" style={{ marginLeft: "auto", color: C.accent, fontWeight: 800 }}>{pct}%</span>
@@ -1365,7 +1388,7 @@ export default function App() {
                   <span style={{ fontSize: 11, color: C.dim, fontWeight: 600 }}>Distance readiness</span>
                   <span className="num" style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: goalReady >= 100 ? C.good : C.text }}>{goalReady}%</span>
                 </div>
-                <Bar pct={goalReady} />
+                <Bar pct={goalReady} label="Distance readiness for your race" />
                 <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 6 }}>
                   {goal ? (goalReady >= 100
                     ? `Your longest run already covers the distance. You're ready.`
@@ -1400,9 +1423,9 @@ export default function App() {
                             background: isGoal ? tint(C.accent, .13) : C.surface2,
                             border: `1px solid ${isGoal ? tint(C.accent, .5) : C.line}`,
                           }}>
-                          <div style={{ fontSize: 8.5, letterSpacing: 1, color: isGoal ? C.accent : C.dim, fontWeight: 800 }}>{p.race.short}</div>
+                          <div style={{ fontSize: 10, letterSpacing: 1, color: isGoal ? C.accent : C.dim, fontWeight: 800 }}>{p.race.short}</div>
                           <div className="num" style={{ fontSize: 13.5, fontWeight: 700, color: C.text, marginTop: 5 }}>{fmtDuration(p.sec)}</div>
-                          <div style={{ fontSize: 8, color: C.dim2, marginTop: 3, fontWeight: 600 }}>
+                          <div style={{ fontSize: 10, color: C.dim2, marginTop: 3, fontWeight: 600 }}>
                             {p.confidence === "high" ? "solid" : p.confidence === "fair" ? "fair" : "rough"}
                           </div>
                         </button>
@@ -1454,7 +1477,7 @@ export default function App() {
             {statsView === "awards" && (<div className="rise">
               <Card style={{ marginBottom: 12 }}>
                 <Label right={<span className="num" style={{ fontSize: 11.5, color: C.accent, fontWeight: 800 }}>{unlocked.size}/{ACHIEVEMENTS.length}</span>}>Achievements</Label>
-                <div style={{ marginBottom: 15 }}><Bar pct={(unlocked.size / ACHIEVEMENTS.length) * 100} /></div>
+                <div style={{ marginBottom: 15 }}><Bar pct={(unlocked.size / ACHIEVEMENTS.length) * 100} label="Achievements earned" /></div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                   {ACHIEVEMENTS.map((a) => {
                     const got = unlocked.has(a.id);
@@ -1468,8 +1491,8 @@ export default function App() {
                           opacity: got ? 1 : 0.42,
                         }}>
                         <div style={{ fontSize: 26, filter: got ? "none" : "grayscale(1)" }}>{a.icon}</div>
-                        <div style={{ fontSize: 9.5, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 6, lineHeight: 1.25 }}>{a.title}</div>
-                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: 1, marginTop: 5, color: got ? C.accent : "transparent" }}>SHARE</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: got ? C.text : C.dim, marginTop: 6, lineHeight: 1.25 }}>{a.title}</div>
+                        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, marginTop: 5, color: got ? C.accent : "transparent" }}>SHARE</div>
                       </button>
                     );
                   })}
@@ -1488,13 +1511,13 @@ export default function App() {
                 {ACCENTS.map((a) => {
                   const active = accent === a.id;
                   return (
-                    <button key={a.id} onClick={() => setAccentTheme(a.id)} className="tap"
+                    <button key={a.id} onClick={() => setAccentTheme(a.id)} className="tap" aria-pressed={accent === a.id} aria-label={`${a.name} accent colour`}
                       style={{
                         cursor: "pointer", borderRadius: 14, padding: "12px 4px",
                         background: active ? `linear-gradient(150deg,${a.accent}26,${a.accent2}12)` : C.surface2,
                         border: `1px solid ${active ? a.accent : C.line}`,
                       }}>
-                      <span style={{
+                      <span aria-hidden="true" style={{
                         display: "block", width: 22, height: 22, borderRadius: "50%", margin: "0 auto 7px",
                         background: `linear-gradient(135deg,${a.accent},${a.accent2})`,
                         boxShadow: active ? `0 0 12px -2px ${a.accent}` : "none",
@@ -1767,8 +1790,35 @@ export default function App() {
                   style={swRun ? { background: C.warn, color: C.bg, border: "none", padding: "11px 26px", fontSize: 14, fontWeight: 800 } : { padding: "11px 26px", fontSize: 14 }}>
                   {swRun ? "Pause" : swMs ? "Resume" : "Start"}
                 </button>
-                <button onClick={() => { setSwRun(false); setSwMs(0); haptic(8); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>Reset</button>
+                <button onClick={() => { setSwRun(false); setSwMs(0); setSwKm(""); haptic(8); }} className="chip" style={{ padding: "11px 22px", fontSize: 14 }}>Reset</button>
               </div>
+
+              {/* A treadmill run used to dead-end here: the clock counted, and
+                  then you had to go and type the whole thing into the Plan tab
+                  by hand. The distance is the one thing the phone cannot know,
+                  so ask for that and save the rest. */}
+              {swMs >= 30000 && (
+                <div className="rise" style={{ marginTop: 16, textAlign: "left" }}>
+                  <div style={{ height: 1, background: C.line, margin: "0 -18px 16px" }} />
+                  <Label>Save this as a session</Label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="lab" htmlFor="sw-dist">Distance ({U.short})</label>
+                      <DistanceInput id="sw-dist" km={swKm} placeholderKm={swDefault?.km || 5}
+                        onChangeKm={(v) => setSwKm(v)} style={{ marginTop: 6 }} />
+                    </div>
+                    <button onClick={saveStopwatch} disabled={!(parseFloat(swKm) > 0)} className="tap cta"
+                      style={{ borderRadius: 12, padding: "12px 18px", fontSize: 14, fontWeight: 800, flexShrink: 0, opacity: parseFloat(swKm) > 0 ? 1 : 0.5 }}>
+                      Save
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.dim2, marginTop: 9, lineHeight: 1.5 }}>
+                    {swDefault
+                      ? `Goes to ${swDefault.title} — Week ${swDefault.week}, your next unfinished session.`
+                      : "Every session in the plan is already done — build a new block first."}
+                  </div>
+                </div>
+              )}
             </Card>
             </div>)}
           </div>
@@ -1850,8 +1900,8 @@ export default function App() {
                     <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "93%" }}>
                       {m.role === "assistant" && (
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                          <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🧠</span>
-                          <span className="lab" style={{ fontSize: 9 }}>Coach</span>
+                          <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>🧠</span>
+                          <span className="lab" style={{ fontSize: 10 }}>Coach</span>
                         </div>
                       )}
                       <div style={{
@@ -1881,8 +1931,8 @@ export default function App() {
                   {coachBusy && (
                     <div style={{ alignSelf: "flex-start", maxWidth: "93%" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                        <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🧠</span>
-                        <span className="lab" style={{ fontSize: 9 }}>Coach</span>
+                        <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>🧠</span>
+                        <span className="lab" style={{ fontSize: 10 }}>Coach</span>
                       </div>
                       <div style={{
                         background: tint(C.text, .05), border: `1px solid ${C.line}`,
@@ -2127,7 +2177,7 @@ export default function App() {
                             className="chip tap" style={{ position: "absolute", bottom: 9, right: 9, zIndex: 500, background: "rgba(8,9,13,.86)", color: C.accent, border: `1px solid ${tint(C.accent, .45)}`, padding: "6px 12px", fontSize: 11, fontWeight: 700, backdropFilter: "blur(8px)" }}>
                             ▶ Replay
                           </button>
-                          <span style={{ position: "absolute", top: 9, left: 9, zIndex: 500, fontSize: 8.5, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 9px", borderRadius: 999 }}>GPS</span>
+                          <span style={{ position: "absolute", top: 9, left: 9, zIndex: 500, fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 9px", borderRadius: 999 }}>GPS</span>
                         </div>
                       )}
 
@@ -2138,15 +2188,18 @@ export default function App() {
                               {h.title}{h.e.feel ? ` ${FEELS[h.e.feel - 1]}` : ""}
                             </div>
                             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                              <span style={{ fontSize: 11, color: C.dim }}>{date} · Week {h.week} · {h.d}</span>
+                              <span style={{ fontSize: 11, color: C.dim }}>{date} · Week {h.week}</span>
                               {/* A walk is a session, but it is not a run, and the
                                   card has to say so — otherwise a 12 km amble the
                                   watch logged on its own reads as training. */}
                               {h.e.activity === "walk" && (
-                                <span style={{ fontSize: 8.5, fontWeight: 900, letterSpacing: 1, color: C.easy, background: tint(C.easy, .14), border: `1px solid ${tint(C.easy, .4)}`, padding: "3px 8px", borderRadius: 999 }}>WALK</span>
+                                <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.easy, background: tint(C.easy, .14), border: `1px solid ${tint(C.easy, .4)}`, padding: "3px 8px", borderRadius: 999 }}>WALK</span>
+                              )}
+                              {h.e.treadmill && (
+                                <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.dim2, background: tint(C.text, .05), border: `1px solid ${C.line}`, padding: "3px 8px", borderRadius: 999 }}>TREADMILL</span>
                               )}
                               {h.e.imported && !h.e.tracked && (
-                                <span style={{ fontSize: 8.5, fontWeight: 900, letterSpacing: 1, color: C.dim2, background: tint(C.text, .05), border: `1px solid ${C.line}`, padding: "3px 8px", borderRadius: 999 }}>IMPORTED</span>
+                                <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.dim2, background: tint(C.text, .05), border: `1px solid ${C.line}`, padding: "3px 8px", borderRadius: 999 }}>IMPORTED</span>
                               )}
                             </div>
                           </div>
@@ -2155,7 +2208,7 @@ export default function App() {
                             <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>
                               {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/${U.short}` : ""}
                             </div>
-                            {h.e.stitch && <div style={{ fontSize: 9, color: C.warn, fontWeight: 800, letterSpacing: 1, marginTop: 3 }}>STITCH</div>}
+                            {h.e.stitch && <div style={{ fontSize: 10, color: C.warn, fontWeight: 800, letterSpacing: 1, marginTop: 3 }}>STITCH</div>}
                           </div>
                         </div>
 
@@ -2256,17 +2309,19 @@ export default function App() {
               <div className="card accented" style={{ borderRadius: 24, padding: "18px 20px 20px", marginBottom: 14, overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{
-                    fontSize: 9.5, letterSpacing: 1.6, fontWeight: 800, color: C.bg,
+                    fontSize: 10, letterSpacing: 1.6, fontWeight: 800, color: C.bg,
                     background: C.grad, borderRadius: 999, padding: "4px 11px",
                   }}>
                     {heroIdx >= 0 ? "TODAY" : "NEXT UP"}
                   </span>
                   <span style={{
-                    fontSize: 9, letterSpacing: 1.4, fontWeight: 800, color: typeColor(hero.type),
+                    fontSize: 10, letterSpacing: 1.4, fontWeight: 800, color: typeColor(hero.type),
                     background: tint(typeColor(hero.type), .13), border: `1px solid ${tint(typeColor(hero.type), .35)}`,
                     borderRadius: 999, padding: "3px 9px",
                   }}>{hero.type.toUpperCase()}</span>
-                  <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 700, letterSpacing: 0.6 }}>W{hero.week} · {hero.d}</span>
+                  <span style={{ fontSize: 10.5, color: C.dim, fontWeight: 700, letterSpacing: 0.6 }}>
+                    W{hero.week} · {heroIdx >= 0 ? dateForDay(startDate, heroIdx).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase() : hero.d}
+                  </span>
                   {heroIdx >= 0 && (
                     <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontWeight: 600 }}>
                       {dateForDay(startDate, heroIdx).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -2401,7 +2456,7 @@ export default function App() {
                       {weekDone ? `✓ ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
                     </span>
                   </div>
-                  <div style={{ marginBottom: 10 }}><Bar pct={(wDone / w.days.length) * 100} /></div>
+                  <div style={{ marginBottom: 10 }}><Bar pct={(wDone / w.days.length) * 100} label={`Week ${w.n} completion`} /></div>
                   {!collapsed && <div style={{ display: "grid", gap: 7 }}>
                     {w.days.map((day, di) => {
                       const key = `w${w.n}d${di}`;
@@ -2421,23 +2476,37 @@ export default function App() {
                             }}>
                             <button onClick={(ev) => { ev.stopPropagation(); update(key, { done: !e.done }); }}
                               className={`tick${e.done ? " pop" : ""}`}
-                              aria-label={e.done ? `Mark ${day.title} not done` : `Mark ${day.title} done`}
+                              role="checkbox" aria-checked={!!e.done}
+                              aria-label={`${day.title}, ${day.type} session${day.km ? `, ${fmtDist(day.km, day.km % 1 ? 1 : 0)}` : ""}`}
                               style={{ border: `2px solid ${e.done ? col : C.line2}`, background: e.done ? col : "transparent", color: C.bg }}>
                               {e.done ? "✓" : ""}
                             </button>
-                            <div style={{ width: 27, flexShrink: 0 }}>
-                              <div style={{ fontSize: 10.5, fontWeight: 800, color: isToday ? C.accent : C.dim, letterSpacing: 0.4 }}>{day.d}</div>
-                              <div style={{ width: 14, height: 2.5, borderRadius: 2, background: col, marginTop: 4, opacity: e.done ? 1 : .5 }} />
+                            {/* The plan's MON..SUN labels are positions in the
+                                training week, not calendar weekdays — the block
+                                can start on any day. With a start date set the
+                                real day is what matters, so show that instead
+                                of a label that will often disagree with the
+                                phone's own calendar. */}
+                            <div style={{ width: 34, flexShrink: 0 }}>
+                              <div style={{ fontSize: 10.5, fontWeight: 800, color: isToday ? C.accent : C.dim, letterSpacing: 0.4 }}>
+                                {startDate ? dateForDay(startDate, flatIdx).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase().slice(0, 3) : day.d}
+                              </div>
+                              {startDate && (
+                                <div className="num" style={{ fontSize: 10, color: C.dim2, fontWeight: 700, marginTop: 1 }}>
+                                  {dateForDay(startDate, flatIdx).getDate()}
+                                </div>
+                              )}
+                              <div title={day.type} style={{ width: 14, height: 2.5, borderRadius: 2, background: col, marginTop: 4, opacity: e.done ? 1 : .5 }} />
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div className="disp" style={{ fontSize: 15.5, fontWeight: 700, textDecoration: e.done ? "line-through" : "none", color: e.done ? C.dim : C.text, lineHeight: 1.25 }}>{day.title}</div>
                               <div style={{ fontSize: 11, color: C.dim2, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{day.detail}</div>
                             </div>
                             {isToday
-                              ? <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>TODAY</span>
+                              ? <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>TODAY</span>
                               : day.km > 0
-                                ? <span className="num" style={{ fontSize: 12, fontWeight: 700, color: e.done ? col : C.dim2, flexShrink: 0 }}>{fmtDistNum(day.km, day.km % 1 ? 1 : 0)}<span style={{ fontSize: 9, color: C.dim2 }}>{U.short}</span></span>
-                                : <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.rest, flexShrink: 0 }}>REST</span>}
+                                ? <span className="num" style={{ fontSize: 12, fontWeight: 700, color: e.done ? col : C.dim2, flexShrink: 0 }}>{fmtDistNum(day.km, day.km % 1 ? 1 : 0)}<span style={{ fontSize: 10, color: C.dim2 }}>{U.short}</span></span>
+                                : <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: C.rest, flexShrink: 0 }}>REST</span>}
                           </div>
 
                           {isOpen && (
@@ -2590,7 +2659,7 @@ function PB({ label, value, unit, color }) {
       border: `1px solid ${color ? tint(color, .32) : C.line}`,
     }}>
       <div className="num" style={{ fontSize: 16.5, fontWeight: 700, color: color || C.text }}>{value}<span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>{unit ? " " + unit : ""}</span></div>
-      <div style={{ fontSize: 9, letterSpacing: 1, color: C.dim, marginTop: 5, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 10, letterSpacing: 1, color: C.dim, marginTop: 5, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
     </div>
   );
 }

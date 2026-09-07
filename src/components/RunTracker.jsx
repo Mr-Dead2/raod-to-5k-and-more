@@ -68,7 +68,7 @@ function StepCard({ label, val, set, unit = "MIN" }) {
       <button className="chip" onClick={() => { set((v) => Math.max(0, v - 1)); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>−</button>
       <div style={{ flex: 1, textAlign: "center" }}>
         <div className="num" style={{ fontSize: 18, fontWeight: 700 }}>{val}</div>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} {unit}</div>
+        <div style={{ fontSize: 10, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} {unit}</div>
       </div>
       <button className="chip" onClick={() => { set((v) => v + 1); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>+</button>
     </div>
@@ -284,7 +284,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
       border: `1px solid ${C.line}`,
     }}>
       <div className="num" style={{ fontSize: 27, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 8.5, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginTop: 6 }}>{label}</div>
+      <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginTop: 6 }}>{label}</div>
     </div>
   );
 
@@ -500,7 +500,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
           </div>
           {targetRoute && (
             <div style={{ maxWidth: 320, width: "100%", margin: "0 auto", background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 10, textAlign: "left" }}>
-              <div style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</div>
+              <div style={{ fontSize: 10, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{targetRoute.name} ({fmtDistNum(targetRoute.km, 1)} {U.short})</div>
               <LiveMap points={[]} ghost={targetRoute.points} height={140} interactive={false} />
               <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Drawn as a dashed guide on your run map.</div>
