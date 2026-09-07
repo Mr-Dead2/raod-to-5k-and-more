@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { ShareSheet } from "./components/ShareSheet.jsx";
+import { copyText } from "./share.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
 import { RouteMaker } from "./components/RouteMaker.jsx";
 import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint } from "./data.js";
@@ -12,7 +13,7 @@ import { RunTracker } from "./components/RunTracker.jsx";
 import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
-import { buildSummary, askCoach, generatePlanBlock, adaptPlanBlock, coachRun, ANALYSE_PROMPT, QUICK_ASKS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
+import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permissionState, loadReminder, saveReminder,
@@ -105,6 +106,66 @@ function useCountUp(target, ms = 650) {
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// Layout primitives.
+//
+// These MUST live at module scope. Defined inside App() they were a new
+// component type on every render, so React unmounted and remounted their whole
+// subtree each time state changed — which destroyed the focused element. The
+// visible symptom was that every text field in the app (the coach's question
+// box, the API key, a session's distance) accepted exactly one character
+// before the input was torn out from under the caret.
+// ---------------------------------------------------------------------------
+const Card = ({ children, style, className = "", innerRef }) => (
+  <div ref={innerRef} className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
+);
+const Label = ({ children, right }) => (
+  <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+    <span className="lab">{children}</span>
+    {right != null && <span style={{ marginLeft: "auto" }}>{right}</span>}
+  </div>
+);
+const Bar = ({ pct }) => (
+  <div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+);
+// Every tab opens with the same shape: a big title, a line of context, and
+// an optional action on the right. That repetition is most of what makes a
+// set of screens read as one app.
+const Screen = ({ title, sub, action }) => (
+  <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 16 }}>
+    <div style={{ minWidth: 0 }}>
+      <h2 className="disp" style={{ fontSize: 27, fontWeight: 700, margin: 0, letterSpacing: -0.7, lineHeight: 1.05 }}>{title}</h2>
+      {sub && <div style={{ fontSize: 12.5, color: C.dim, marginTop: 5, fontWeight: 500 }}>{sub}</div>}
+    </div>
+    {action && <div style={{ marginLeft: "auto", flexShrink: 0 }}>{action}</div>}
+  </div>
+);
+// Segmented control. The pill is one element that translates, so switching
+// sub-screens is a movement rather than two things repainting.
+const Segmented = ({ items, value, onChange }) => {
+  const i = Math.max(0, items.findIndex((x) => x.id === value));
+  return (
+    <div className="seg" style={{ marginBottom: 16 }}>
+      <i style={{ width: `calc((100% - 8px) / ${items.length})`, transform: `translateX(${i * 100}%)` }} />
+      {items.map((x) => (
+        <button key={x.id} className={value === x.id ? "on" : ""}
+          onClick={() => { onChange(x.id); haptic(5); }}>{x.label}</button>
+      ))}
+    </div>
+  );
+};
+// A compact figure tile: one number, one label, optional footnote.
+const Tile = ({ label, value, unit, sub, hero, color, delay = 0 }) => (
+  <div className="card stagger" style={{ animationDelay: `${delay}s`, flex: 1, minWidth: 0, borderRadius: 18, padding: "14px 14px 13px", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+      <span className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 28, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</span>
+      {unit && <span className="num" style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>{unit}</span>}
+    </div>
+    <div style={{ fontSize: 9.5, letterSpacing: 1.4, color: C.dim, marginTop: 9, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
+    {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
+  </div>
+);
+
 export default function App() {
   const [log, setLog] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -144,6 +205,13 @@ export default function App() {
   const [coachBusy, setCoachBusy] = useState(false);
   const [coachErr, setCoachErr] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [coachStream, setCoachStream] = useState("");   // reply text as it arrives
+  const [keyCheck, setKeyCheck] = useState(null);       // { ok, error } after a key test
+  const [keyBusy, setKeyBusy] = useState(false);
+  const coachAbort = useRef(null);                      // aborts the in-flight reply
+  const coachAcc = useRef("");                          // text streamed so far
+  const chatEndRef = useRef(null);
+  const chatBoxRef = useRef(null);
   // AI-generated plan: a version counter to re-derive plan memos, plus a pending
   // proposal the user previews before applying.
   const [planVersion, setPlanVersion] = useState(0);
@@ -226,6 +294,16 @@ export default function App() {
   // Moving between tabs should feel like opening a screen, not scrolling a
   // very long page: start each one at the top.
   useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [tab, statsView]);
+
+  // Follow the reply as it streams — inside the conversation box only. Scrolling
+  // the page instead moved the composer (and its Stop button) down the screen
+  // on every token, so the control you were reaching for slid out from under
+  // your thumb.
+  useEffect(() => {
+    if (tab !== "coach") return;
+    const box = chatBoxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [coachStream, coachChat, coachBusy, tab]);
 
   // Coming back from Android's notification settings should be reflected here
   // straight away, rather than leaving a "blocked" banner over a permission the
@@ -396,8 +474,31 @@ export default function App() {
     saveSettings({ ...loadSettings(), coachChat: trimmed });
   };
 
+  // Everything the coach needs about the plan itself: today's session and what
+  // is coming. Without it the most obvious question anyone asks a coach — what
+  // should I do today? — gets answered by guesswork.
+  const coachPlanContext = () => {
+    const at = (i) => (i >= 0 && i < TOTAL ? FLAT[i] : null);
+    const brief = (f) => f && ({ week: f.week, day: f.d, type: f.type, title: f.title, detail: f.detail, km: f.km, done: !!(log[f.key] && log[f.key].done) });
+    const startIdx = todayKey ? todayIdx : FLAT.findIndex((f) => !(log[f.key] && log[f.key].done));
+    return {
+      today: todayKey ? brief(at(todayIdx)) : null,
+      upcoming: startIdx >= 0
+        ? Array.from({ length: 7 }, (_, i) => brief(at(startIdx + i))).filter(Boolean)
+        : null,
+    };
+  };
+
+  const coachSummary = () => buildSummary({
+    stats, weekly, history, goal: coachGoal, race: coachRaceGoal, plan: coachPlanContext(),
+  });
+
   // Send a message through the coach. `content` is what the model receives;
   // `display` (optional) is the friendlier text shown in the user bubble.
+  //
+  // The reply streams in. Waiting in silence for a long answer makes a fast
+  // model feel slow, and a reply the runner stops halfway is still a reply —
+  // whatever arrived is kept rather than thrown away.
   const sendToCoach = async (content, display) => {
     if (coachBusy) return;
     if (!coachKey.trim()) { setCoachErr("Add your free Groq API key below first."); setShowKey(true); return; }
@@ -406,23 +507,59 @@ export default function App() {
     const base = [...coachChat, { role: "user", content, display: display || content }];
     setCoachChat(base);
     setCoachBusy(true);
+    setCoachStream("");
+    coachAcc.current = "";
+    const ctrl = new AbortController();
+    coachAbort.current = ctrl;
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
       const messages = base.map((m) => ({ role: m.role, content: m.content })); // strip display before sending
-      const text = await askCoach({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, messages });
+      const text = await streamCoach({
+        apiKey: coachKey.trim(),
+        model: coachModel.trim() || DEFAULT_MODEL,
+        summary: coachSummary(),
+        messages,
+        signal: ctrl.signal,
+        onToken: (t) => { coachAcc.current += t; setCoachStream(coachAcc.current); },
+      });
       persistChat([...base, { role: "assistant", content: text }]);
       haptic([10, 20, 10]);
     } catch (e) {
-      setCoachErr(e.message || "Couldn't reach the coach.");
-      setCoachChat(coachChat); // roll the optimistic user bubble back on failure
+      const stopped = e?.name === "AbortError";
+      if (stopped && coachAcc.current.trim()) {
+        persistChat([...base, { role: "assistant", content: coachAcc.current.trim(), stopped: true }]);
+      } else {
+        if (!stopped) setCoachErr(e.message || "Couldn't reach the coach.");
+        setCoachChat(coachChat); // roll the optimistic user bubble back
+      }
       haptic(8);
     } finally {
       setCoachBusy(false);
+      setCoachStream("");
+      coachAcc.current = "";
+      coachAbort.current = null;
     }
   };
+  const stopCoach = () => { coachAbort.current?.abort(); haptic(8); };
   const analyseCoach = () => sendToCoach(ANALYSE_PROMPT, "Analyse my training");
   const askCoachInput = () => { const q = coachInput.trim(); if (!q) return; setCoachInput(""); sendToCoach(q); };
   const clearCoachChat = () => { persistChat([]); setCoachErr(""); haptic(6); };
+
+  // Retry the last question: drop the failed exchange and ask it again.
+  const retryCoach = () => {
+    const lastUser = [...coachChat].reverse().find((m) => m.role === "user");
+    if (!lastUser || coachBusy) return;
+    const upto = coachChat.slice(0, coachChat.lastIndexOf(lastUser));
+    setCoachChat(upto);
+    setTimeout(() => sendToCoach(lastUser.content, lastUser.display), 0);
+  };
+
+  const testCoachKey = async () => {
+    haptic(8);
+    setKeyBusy(true);
+    setKeyCheck(null);
+    setKeyCheck(await validateKey({ apiKey: coachKey, model: coachModel.trim() || DEFAULT_MODEL }));
+    setKeyBusy(false);
+  };
 
   // Swap the active training plan, persist it, and re-derive plan-based memos.
   const setActivePlan = (weeks) => {
@@ -438,7 +575,7 @@ export default function App() {
     haptic(8);
     setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
+      const summary = coachSummary();
       const raw = await generatePlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary });
       const extended = extendPlan(WEEKS, raw);
       if (!extended) throw new Error("The plan came back empty — try again.");
@@ -461,7 +598,7 @@ export default function App() {
     haptic(8);
     setCoachErr(""); setPlanBusy(true); setProposedPlan(null);
     try {
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
+      const summary = coachSummary();
       const raw = await adaptPlanBlock({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, weeks: future });
       const res = adaptedPlan(WEEKS, log, raw);
       if (!res) throw new Error("Couldn't adjust the plan — try again.");
@@ -506,7 +643,7 @@ export default function App() {
         cadenceSpm: e.cadence || null,
         date: e.date ? e.date.slice(0, 10) : null,
       };
-      const summary = buildSummary({ stats, weekly, history, goal: coachGoal, race: coachRaceGoal });
+      const summary = coachSummary();
       const text = await coachRun({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary, run });
       setRunFeedback((m) => ({ ...m, [item.key]: text }));
       haptic([10, 20, 10]);
@@ -841,55 +978,6 @@ export default function App() {
 
   // `hero` renders the number in the accent gradient — reserved for the one
   // figure per row that matters most.
-  const Card = ({ children, style, className = "", innerRef }) => (
-    <div ref={innerRef} className={`card ${className}`.trim()} style={{ borderRadius: 20, padding: 18, ...style }}>{children}</div>
-  );
-  const Label = ({ children, right }) => (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-      <span className="lab">{children}</span>
-      {right != null && <span style={{ marginLeft: "auto" }}>{right}</span>}
-    </div>
-  );
-  const Bar = ({ pct }) => (
-    <div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
-  );
-  // Every tab opens with the same shape: a big title, a line of context, and
-  // an optional action on the right. That repetition is most of what makes a
-  // set of screens read as one app.
-  const Screen = ({ title, sub, action }) => (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 16 }}>
-      <div style={{ minWidth: 0 }}>
-        <h2 className="disp" style={{ fontSize: 27, fontWeight: 700, margin: 0, letterSpacing: -0.7, lineHeight: 1.05 }}>{title}</h2>
-        {sub && <div style={{ fontSize: 12.5, color: C.dim, marginTop: 5, fontWeight: 500 }}>{sub}</div>}
-      </div>
-      {action && <div style={{ marginLeft: "auto", flexShrink: 0 }}>{action}</div>}
-    </div>
-  );
-  // Segmented control. The pill is one element that translates, so switching
-  // sub-screens is a movement rather than two things repainting.
-  const Segmented = ({ items, value, onChange }) => {
-    const i = Math.max(0, items.findIndex((x) => x.id === value));
-    return (
-      <div className="seg" style={{ marginBottom: 16 }}>
-        <i style={{ width: `calc((100% - 8px) / ${items.length})`, transform: `translateX(${i * 100}%)` }} />
-        {items.map((x) => (
-          <button key={x.id} className={value === x.id ? "on" : ""}
-            onClick={() => { onChange(x.id); haptic(5); }}>{x.label}</button>
-        ))}
-      </div>
-    );
-  };
-  // A compact figure tile: one number, one label, optional footnote.
-  const Tile = ({ label, value, unit, sub, hero, color, delay = 0 }) => (
-    <div className="card stagger" style={{ animationDelay: `${delay}s`, flex: 1, minWidth: 0, borderRadius: 18, padding: "14px 14px 13px", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-        <span className={`num${hero ? " gtext" : ""}`} style={{ fontSize: 28, fontWeight: 700, color: hero ? undefined : color || C.text, lineHeight: 1 }}>{value}</span>
-        {unit && <span className="num" style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>{unit}</span>}
-      </div>
-      <div style={{ fontSize: 9.5, letterSpacing: 1.4, color: C.dim, marginTop: 9, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
-      {sub && <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 3 }}>{sub}</div>}
-    </div>
-  );
   const ShareBtn = ({ spec, label: lbl = "Share", style }) => (
     <button onClick={() => openShare(spec)} className="chip tap"
       style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.surface2, color: C.text, ...style }}>
@@ -1005,6 +1093,8 @@ export default function App() {
         @keyframes cellIn { from{ opacity:0; transform:scale(.5) } to{ opacity:1; transform:none } }
         @keyframes slideUp { from{ opacity:0; transform:translateY(14px) } to{ opacity:1; transform:none } }
         @keyframes spin { to { transform:rotate(360deg) } }
+        @keyframes blink { 0%,45% { opacity:1 } 55%,100% { opacity:.15 } }
+        .caret { animation:blink .9s steps(1,end) infinite; }
         @keyframes pulseRing { 0%,100% { opacity:.45 } 50% { opacity:.9 } }
         .rise { animation:rise .3s ease both; }
         .pop { animation:pop .32s ease; }
@@ -1012,7 +1102,7 @@ export default function App() {
         .spin { animation:spin 1s linear infinite; }
 
         @media (prefers-reduced-motion: reduce) {
-          .stagger, .spin, .aurora i { animation:none !important; }
+          .stagger, .spin, .aurora i, .caret { animation:none !important; }
           .stagger { opacity:1; }
         }
       `}</style>
@@ -1434,8 +1524,9 @@ export default function App() {
                 ) : (
                   <>
                     <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.6, marginBottom: 11 }}>
-                      Connected. Look for runs recorded in the last 30 days — walks and hikes count,
-                      rides and gym sessions don't, and anything Stride already tracked is left alone.
+                      Connected. Look for runs recorded in the last 30 days. Rides and gym sessions
+                      are never imported, walks only if you switch them on below, and anything Stride
+                      already tracked is left alone.
                     </div>
                     <button onClick={scanHealth} disabled={hcBusy} className="tap cta"
                       style={{ width: "100%", borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", opacity: hcBusy ? 0.6 : 1 }}>
@@ -1561,78 +1652,167 @@ export default function App() {
           </div>
         )}
 
-        {tab === "coach" && (
+        {tab === "coach" && (() => {
+          const asks = quickAsks({
+            stats,
+            race: goal ? goal.name : null,
+            raceDays: goalDate ? goalDays : null,
+            todaySession: todayKey && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx] : null,
+          });
+          const hasChat = coachChat.length > 0 || coachBusy;
+          return (
           <div className="rise">
-            <Screen title="AI coach" sub={coachKey ? "Grounded in your real numbers · powered by Groq" : "Add a free Groq key to unlock it"} />
+            <Screen
+              title="AI coach"
+              sub={coachKey ? "Reads your real numbers · powered by Groq" : "Add a free Groq key to unlock it"}
+              action={coachChat.length > 0
+                ? <button onClick={clearCoachChat} disabled={coachBusy} className="chip tap" style={{ opacity: coachBusy ? 0.5 : 1 }}>Clear</button>
+                : null} />
 
             {!coachKey && (
-              <Card style={{ marginBottom: 12, borderColor: C.accent }}>
-                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.55, marginBottom: 10 }}>
-                  Add a free Groq API key to unlock your coach — chat, run analysis, and AI-built plans. It's stored only on this device.
+              <Card className="glow" style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 13.5, color: C.text, lineHeight: 1.6, marginBottom: 12 }}>
+                  Your coach reads every run you've logged and answers from those numbers. Paste a
+                  free Groq API key to switch it on — it's stored on this device and never leaves it
+                  except to reach Groq.
                 </div>
-                <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
+                <label className="lab">Groq API key</label>
                 <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
-                  onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
-                  autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
-                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
-                </label>
-                <div style={{ fontSize: 11, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
-                  Get one free at <span style={{ color: C.text, fontWeight: 600 }}>console.groq.com/keys</span>.
+                  onChange={(e) => { saveCoachKey(e.target.value); setKeyCheck(null); }} placeholder="gsk_…"
+                  autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 7 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: C.dim, cursor: "pointer" }}>
+                    <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
+                  </label>
+                  <button onClick={testCoachKey} disabled={keyBusy || !coachKey.trim()} className="chip tap"
+                    style={{ marginLeft: "auto", opacity: keyBusy || !coachKey.trim() ? 0.5 : 1 }}>
+                    {keyBusy ? "Checking…" : "Check key"}
+                  </button>
+                </div>
+                {keyCheck && (
+                  <div className="rise" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.55, fontWeight: 600, color: keyCheck.ok ? C.good : C.warn }}>
+                    {keyCheck.ok ? "✓ Key works — ask your coach anything." : keyCheck.error}
+                  </div>
+                )}
+                <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 11, lineHeight: 1.5 }}>
+                  Get one free at <span style={{ color: C.text, fontWeight: 700 }}>console.groq.com/keys</span>.
                 </div>
               </Card>
             )}
 
-            {/* Chat */}
-            <Card style={{ marginBottom: 12 }}>
-              <Label>Ask your coach</Label>
-
-              <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>MY GOAL</label>
-              <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
-                placeholder={DEFAULT_GOAL} style={{ marginTop: 6, marginBottom: 12 }} />
-
-              {coachChat.length > 0 && (
-                <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+            {/* Conversation */}
+            <Card style={{ marginBottom: 12, padding: hasChat ? "16px 15px 15px" : 18 }}>
+              {!hasChat ? (
+                <div style={{ textAlign: "center", padding: "14px 6px 4px" }}>
+                  <div style={{ fontSize: 30 }}>🧠</div>
+                  <div className="disp" style={{ fontSize: 17, fontWeight: 700, marginTop: 9 }}>
+                    {stats.runsLogged ? "Ask about your training" : "Log a run and I'll have something to say"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: C.dim, marginTop: 6, lineHeight: 1.55, maxWidth: 330, margin: "6px auto 0" }}>
+                    {stats.runsLogged
+                      ? `I can see your ${stats.runsLogged} logged run${stats.runsLogged === 1 ? "" : "s"}, your paces, your plan and what's coming up.`
+                      : "Tick off a session or track a run with GPS, then come back for a read on it."}
+                  </div>
+                  <button onClick={analyseCoach} disabled={coachBusy} className="tap cta disp"
+                    style={{ marginTop: 16, borderRadius: 14, padding: "13px 22px", fontSize: 14.5, fontWeight: 700, cursor: "pointer", opacity: coachBusy ? 0.6 : 1 }}>
+                    Analyse my training
+                  </button>
+                </div>
+              ) : (
+                <div ref={chatBoxRef} style={{
+                  display: "flex", flexDirection: "column", gap: 10,
+                  maxHeight: "52vh", overflowY: "auto", overscrollBehavior: "contain",
+                  margin: "0 -3px", padding: "0 3px",
+                }}>
                   {coachChat.map((m, i) => (
-                    <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
+                    <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "93%" }}>
+                      {m.role === "assistant" && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                          <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🧠</span>
+                          <span className="lab" style={{ fontSize: 9 }}>Coach</span>
+                        </div>
+                      )}
                       <div style={{
-                        background: m.role === "user" ? C.grad : C.surface2,
+                        background: m.role === "user" ? C.grad : tint(C.text, .05),
                         color: m.role === "user" ? C.bg : C.text,
                         border: m.role === "user" ? "none" : `1px solid ${C.line}`,
-                        borderRadius: 14, padding: "10px 13px", fontSize: 13, lineHeight: 1.55,
+                        borderRadius: m.role === "user" ? "16px 16px 5px 16px" : "5px 16px 16px 16px",
+                        padding: "11px 14px", fontSize: 13.5, lineHeight: 1.6,
                         whiteSpace: "pre-wrap", fontWeight: m.role === "user" ? 600 : 400,
                       }}>{m.display || m.content}</div>
+                      {m.role === "assistant" && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                          {m.stopped && <span style={{ fontSize: 10, color: C.dim2, fontWeight: 700 }}>stopped early</span>}
+                          {i === coachChat.length - 1 && !coachBusy && (
+                            <>
+                              <button onClick={async () => { haptic(6); const r = await copyText(m.content); setToast({ icon: r === "copied" ? "📋" : "⚠️", title: r === "copied" ? "Answer copied" : "Couldn't copy", label: "COACH" }); }}
+                                className="chip tap" style={{ fontSize: 10.5, padding: "5px 11px" }}>Copy</button>
+                              <button onClick={retryCoach} className="chip tap" style={{ fontSize: 10.5, padding: "5px 11px" }}>Ask again</button>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
+
+                  {/* the reply as it arrives */}
                   {coachBusy && (
-                    <div style={{ alignSelf: "flex-start", fontSize: 12, color: C.dim, padding: "2px 4px" }}>Coach is thinking…</div>
+                    <div style={{ alignSelf: "flex-start", maxWidth: "93%" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                        <span style={{ width: 17, height: 17, borderRadius: 6, background: C.grad, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🧠</span>
+                        <span className="lab" style={{ fontSize: 9 }}>Coach</span>
+                      </div>
+                      <div style={{
+                        background: tint(C.text, .05), border: `1px solid ${C.line}`,
+                        borderRadius: "5px 16px 16px 16px", padding: "11px 14px",
+                        fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap", color: C.text,
+                      }}>
+                        {coachStream || <span style={{ color: C.dim }}>thinking</span>}
+                        <span className="caret" style={{ display: "inline-block", width: 7, height: 14, marginLeft: 2, verticalAlign: "-2px", background: C.accent, borderRadius: 2 }} />
+                      </div>
+                      {/* No Stop button here on purpose: attached to the growing
+                          bubble it slides down the screen as the reply arrives,
+                          so it moves out from under the thumb reaching for it.
+                          The composer's Send turns into Stop instead — same
+                          action, fixed position. */}
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+              )}
+
+              {coachErr && (
+                <div className="rise" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, padding: "10px 12px", borderRadius: 12, background: tint(C.warn, .1), border: `1px solid ${tint(C.warn, .4)}` }}>
+                  <span style={{ flex: 1, fontSize: 12, color: C.text, lineHeight: 1.5 }}>{coachErr}</span>
+                  {coachChat.length > 0 && (
+                    <button onClick={() => { setCoachErr(""); retryCoach(); }} className="chip tap" style={{ fontSize: 11, padding: "6px 11px", flexShrink: 0 }}>Retry</button>
                   )}
                 </div>
               )}
 
-              {coachErr && <div style={{ fontSize: 12, color: C.warn, marginBottom: 10, lineHeight: 1.5 }}>{coachErr}</div>}
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {QUICK_ASKS.map((q) => (
-                  <button key={q.label} onClick={() => sendToCoach(q.text, q.label)} disabled={coachBusy} className="chip tap"
-                    style={{ background: C.surface2, color: C.text, opacity: coachBusy ? 0.5 : 1 }}>{q.label}</button>
-                ))}
-              </div>
-
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* Composer */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14 }}>
                 <input className="inp" value={coachInput} onChange={(e) => setCoachInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") askCoachInput(); }}
                   placeholder="Ask your coach anything…" disabled={coachBusy} />
-                <button onClick={askCoachInput} disabled={coachBusy || !coachInput.trim()} className="tap cta"
-                  style={{ borderRadius: 10, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0, opacity: coachBusy || !coachInput.trim() ? 0.5 : 1 }}>Send</button>
+                <button onClick={coachBusy ? stopCoach : askCoachInput} disabled={!coachBusy && !coachInput.trim()}
+                  className={coachBusy ? "chip tap" : "tap cta"}
+                  style={{ borderRadius: 12, padding: "11px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0, opacity: !coachBusy && !coachInput.trim() ? 0.5 : 1 }}>
+                  {coachBusy ? "Stop" : "Send"}
+                </button>
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button onClick={analyseCoach} disabled={coachBusy} className="chip tap" style={{ flex: 1, opacity: coachBusy ? 0.5 : 1 }}>
-                  {coachChat.length ? "Re-analyse my training" : "Analyse my training"}
-                </button>
+              {/* Contextual one-tap asks — built from this runner's situation */}
+              <div className="hscroll" style={{ marginTop: 10 }}>
+                {asks.map((q) => (
+                  <button key={q.label} onClick={() => sendToCoach(q.text, q.label)} disabled={coachBusy}
+                    className="chip tap" style={{ flexShrink: 0, background: C.surface2, color: C.text, opacity: coachBusy ? 0.5 : 1 }}>
+                    {q.label}
+                  </button>
+                ))}
                 {coachChat.length > 0 && (
-                  <button onClick={clearCoachChat} disabled={coachBusy} className="chip tap" style={{ opacity: coachBusy ? 0.5 : 1 }}>Clear</button>
+                  <button onClick={analyseCoach} disabled={coachBusy} className="chip tap"
+                    style={{ flexShrink: 0, opacity: coachBusy ? 0.5 : 1 }}>Re-analyse</button>
                 )}
               </div>
             </Card>
@@ -1640,29 +1820,33 @@ export default function App() {
             {/* Plan tools */}
             <Card style={{ marginBottom: 12 }}>
               <Label>Your training plan</Label>
-              <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
-                Build a fresh block when you've smashed your goal, or re-tune your upcoming sessions from the too easy / too hard feedback you leave on completed days. Nothing logged is lost.
+              <div style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.55, marginBottom: 12 }}>
+                Build a fresh block when you've smashed your goal, or re-tune the sessions you
+                haven't started yet from the too easy / too hard feedback you leave on completed
+                days. Nothing you've logged is lost either way.
               </div>
 
               {proposedPlan && (() => {
                 const newWeeks = proposedPlan.weeks.slice(proposedPlan.fromIdx);
                 const verb = proposedPlan.mode === "adapt" ? "adjusted" : "new";
                 return (
-                  <div className="rise" style={{ background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 8 }}>Proposed — {newWeeks.length} {verb} week{newWeeks.length === 1 ? "" : "s"}</div>
+                  <div className="rise" style={{ background: C.bgSoft, border: `1px solid ${tint(C.accent, .45)}`, borderRadius: 14, padding: 13, marginBottom: 11 }}>
+                    <div className="lab" style={{ color: C.accent, marginBottom: 9 }}>Proposed — {newWeeks.length} {verb} week{newWeeks.length === 1 ? "" : "s"}</div>
                     {newWeeks.map((w) => {
-                      const km = w.days.reduce((s, d) => s + (d.km || 0), 0);
+                      const km = w.days.reduce((sum, d) => sum + (d.km || 0), 0);
                       return (
-                        <div key={w.n} style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Week {w.n} · {w.label} <span style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span></div>
-                          <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+                        <div key={w.n} style={{ marginBottom: 9 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>
+                            Week {w.n} · {w.label} <span className="num" style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: C.dim2, lineHeight: 1.55, marginTop: 2 }}>
                             {w.days.map((d) => `${d.d} ${d.km ? d.title : "rest"}`).join(" · ")}
                           </div>
                         </div>
                       );
                     })}
-                    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                      <button onClick={applyProposedPlan} className="tap cta" style={{ flex: 1, borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700 }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button onClick={applyProposedPlan} className="tap cta" style={{ flex: 1, borderRadius: 12, padding: "11px 0", fontSize: 13.5, fontWeight: 800 }}>
                         {proposedPlan.mode === "adapt" ? "Update my plan" : "Add to my plan"}
                       </button>
                       <button onClick={() => setProposedPlan(null)} className="chip tap">Discard</button>
@@ -1684,35 +1868,87 @@ export default function App() {
               </div>
             </Card>
 
-            {/* Setup */}
-            {coachKey && (
-              <Card style={{ marginBottom: 12 }}>
-                <details>
-                  <summary style={{ fontSize: 11, color: C.dim, cursor: "pointer", fontWeight: 700, letterSpacing: 1 }}>GROQ KEY &amp; MODEL · edit</summary>
-                  <div style={{ marginTop: 12 }}>
-                    <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>GROQ API KEY</label>
-                    <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
-                      onChange={(e) => saveCoachKey(e.target.value)} placeholder="gsk_…"
-                      autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 6 }} />
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.dim, marginTop: 9, cursor: "pointer" }}>
+            {/* Coach setup */}
+            <Card style={{ marginBottom: 12 }}>
+              <Label>Coach setup</Label>
+
+              <label className="lab">What I'm training for</label>
+              <input className="inp" value={coachGoal} onChange={(e) => saveCoachGoal(e.target.value)}
+                placeholder={DEFAULT_GOAL} style={{ marginTop: 7, marginBottom: 16 }} />
+
+              <label className="lab">Model</label>
+              <div style={{ display: "grid", gap: 7, marginTop: 8 }}>
+                {MODELS.map((m) => {
+                  const active = (coachModel.trim() || DEFAULT_MODEL) === m.id;
+                  return (
+                    <button key={m.id} onClick={() => { saveCoachModel(m.id); setKeyCheck(null); haptic(5); }} className="tap"
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, textAlign: "left", cursor: "pointer",
+                        borderRadius: 13, padding: "11px 13px",
+                        background: active ? tint(C.accent, .12) : C.bgSoft,
+                        border: `1px solid ${active ? tint(C.accent, .45) : C.line}`,
+                      }}>
+                      <span style={{
+                        width: 15, height: 15, borderRadius: "50%", flexShrink: 0,
+                        border: `2px solid ${active ? C.accent : C.line2}`,
+                        background: active ? C.accent : "transparent",
+                      }} />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text }}>{m.name}</span>
+                        <span style={{ display: "block", fontSize: 11, color: C.dim2, marginTop: 2 }}>{m.note}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <details style={{ marginTop: 11 }}>
+                <summary className="lab" style={{ cursor: "pointer" }}>Use another model</summary>
+                <input className="inp" value={coachModel} onChange={(e) => { saveCoachModel(e.target.value); setKeyCheck(null); }}
+                  placeholder={DEFAULT_MODEL} autoComplete="off" spellCheck={false} style={{ marginTop: 9 }} />
+                <div style={{ fontSize: 11, color: C.dim2, marginTop: 8, lineHeight: 1.5 }}>
+                  Any model id Groq serves. Their free line-up changes, so the list above will go stale.
+                </div>
+              </details>
+
+              {coachKey && (
+                <details style={{ marginTop: 16 }}>
+                  <summary className="lab" style={{ cursor: "pointer" }}>Groq API key</summary>
+                  <input className="inp" type={showKey ? "text" : "password"} value={coachKey}
+                    onChange={(e) => { saveCoachKey(e.target.value); setKeyCheck(null); }} placeholder="gsk_…"
+                    autoComplete="off" autoCorrect="off" spellCheck={false} style={{ marginTop: 9 }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: C.dim, cursor: "pointer" }}>
                       <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} /> Show key
                     </label>
-                    <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1, display: "block", marginTop: 12 }}>MODEL</label>
-                    <input className="inp" value={coachModel} onChange={(e) => saveCoachModel(e.target.value)}
-                      placeholder={DEFAULT_MODEL} autoComplete="off" spellCheck={false} style={{ marginTop: 6 }} />
-                    <div style={{ fontSize: 11, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
-                      Stored only on this device and sent straight to Groq — no server in between.
+                    <button onClick={testCoachKey} disabled={keyBusy} className="chip tap" style={{ marginLeft: "auto", opacity: keyBusy ? 0.5 : 1 }}>
+                      {keyBusy ? "Checking…" : "Check key"}
+                    </button>
+                  </div>
+                  {keyCheck && (
+                    <div className="rise" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.55, fontWeight: 600, color: keyCheck.ok ? C.good : C.warn }}>
+                      {keyCheck.ok ? "✓ Key works." : keyCheck.error}
                     </div>
+                  )}
+                  <div style={{ fontSize: 11, color: C.dim2, marginTop: 11, lineHeight: 1.5 }}>
+                    Stored only on this device and sent straight to Groq — no server in between. It is
+                    stripped from backup files, so exporting never leaks it.
                   </div>
                 </details>
-              </Card>
-            )}
+              )}
+            </Card>
           </div>
-        )}
+          );
+        })()}
 
         {tab === "history" && (() => {
+          // "Runs" has to mean runs: a walk the watch logged by itself has a
+          // distance, so filtering on distance alone let it back in.
+          const anyWalks = history.some((h) => h.e.activity === "walk");
           const shown = history.filter((h) =>
-            histFilter === "gps" ? h.e.tracked : histFilter === "run" ? parseFloat(h.e.km) > 0 : true);
+            histFilter === "gps" ? h.e.tracked
+              : histFilter === "run" ? isRun(h.e) && parseFloat(h.e.km) > 0
+                : histFilter === "walk" ? h.e.activity === "walk"
+                  : true);
           const shownKm = shown.reduce((s, h) => s + (parseFloat(h.e.km) || 0), 0);
           const shownMin = shown.reduce((s, h) => s + (parseFloat(h.e.min) || 0), 0);
           return (
@@ -1724,7 +1960,7 @@ export default function App() {
 
             {history.length > 0 && (
               <div className="hscroll" style={{ marginBottom: 14 }}>
-                {[["all", "All"], ["run", "Runs"], ["gps", "GPS tracked"]].map(([id, lbl]) => (
+                {[["all", "All"], ["run", "Runs"], ...(anyWalks ? [["walk", "Walks"]] : []), ["gps", "GPS tracked"]].map(([id, lbl]) => (
                   <button key={id} onClick={() => { setHistFilter(id); haptic(5); }} className={`chip tap${histFilter === id ? " on" : ""}`}>
                     {lbl}
                   </button>
@@ -1829,7 +2065,7 @@ export default function App() {
                             </button>
                             <button onClick={() => coachThisRun(h)} disabled={runFeedbackBusy === h.key} className="chip tap"
                               style={{ flex: 1, padding: "11px 0", fontSize: 12.5, fontWeight: 700, opacity: runFeedbackBusy === h.key ? 0.6 : 1 }}>
-                              {runFeedbackBusy === h.key ? "Reading…" : runFeedback[h.key] ? "Ask again" : "🧠 Coach this run"}
+                              {runFeedbackBusy === h.key ? "Reading…" : runFeedback[h.key] ? "Ask again" : `🧠 Coach this ${h.e.activity === "walk" ? "walk" : "run"}`}
                             </button>
                           </div>
                         )}

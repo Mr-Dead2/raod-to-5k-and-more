@@ -270,9 +270,22 @@ front — the other headline reason to go native.
   `stats`/`weekly`/`history` snapshot into a compact JSON; `askCoach()` sends the
   full message thread (the summary is injected into the system prompt so every
   turn is grounded in real numbers) and returns plain-text advice with friendly
-  error messages. The UI is a chat: `ANALYSE_PROMPT` kicks off a first read,
-  `QUICK_ASKS` are one-tap follow-up chips (pacing, 5K readiness, stitches, fuel,
-  a plan beyond 5K), and a free-text box asks anything. Settings: `goal` (free-text
+  error messages. **Replies stream** (`streamCoach`, SSE over the same endpoint):
+  waiting in silence for a long answer makes a fast model feel slow. Frames are
+  buffered across chunk boundaries, `Stop` aborts mid-reply and whatever arrived
+  is kept as a real message (tagged `stopped`), and a runtime with no readable
+  body falls back to `askCoach`. `reader.cancel()` must be `.catch()`-ed — it
+  returns a promise that rejects on the errored stream an abort leaves behind,
+  and `try/catch` does not catch that. `MODELS` is a short picker of Groq model
+  ids (with a free-text box behind it, since their free line-up changes) and
+  `validateKey()` answers "is my key right?" at setup rather than via a failed
+  first question. The UI is a chat: `ANALYSE_PROMPT` kicks off a first read,
+  `quickAsks(ctx)` builds the one-tap chips **from this runner's situation**
+  (today's session, the race and how far away it is, whether they have logged a
+  stitch, whether the streak has broken), and a free-text box asks anything.
+  `buildSummary` also carries `today` and `upcomingSessions` from the plan, so
+  the most obvious question anyone asks a coach — what should I do today? — is
+  answered from the plan rather than guessed. Settings: `goal` (free-text
   target, defaults to going beyond 5K), `coachModel` (defaults to `DEFAULT_MODEL`),
   and `coachChat` (the message thread, capped to the last 20, cached so it survives
   reloads; the older single-reply `coachLast` is migrated in). The `groqKey` is
@@ -485,6 +498,22 @@ front — the other headline reason to go native.
   off the shape, not the app name, so files exported under the old
   `road-to-5k` name still import. The achievement toast is reused for
   backup/share and for the notification test via an optional `label`.
+
+## Gotchas that have already bitten
+
+- **Layout primitives must live at module scope.** `Card`, `Screen`, `Segmented`,
+  `Tile`, `Label` and `Bar` are defined next to `App`, not inside it. Defined
+  inside the component they are a new component type on every render, so React
+  unmounts and remounts their entire subtree whenever state changes — which
+  destroys the focused element. The symptom was that every text field in the app
+  (the coach's question box, the Groq key, a session's distance) accepted exactly
+  one character before the input was torn out from under the caret. Never define
+  a component that wraps an input inside another component's body.
+- **Controls attached to growing content move under the thumb.** The coach's
+  Stop button lives in the composer, not under the streaming bubble: attached to
+  the bubble it slid down the screen with every token. Autoscroll follows the
+  reply *inside* the conversation box (`chatBoxRef`, a `max-height` scroller) —
+  scrolling the page instead dragged the composer around mid-reply.
 
 ## Styling conventions
 
