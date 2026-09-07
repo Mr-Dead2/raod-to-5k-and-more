@@ -28,11 +28,19 @@ export function riegel(baseSec, baseKm, targetKm) {
 }
 
 // How much to trust a prediction: extrapolating a long way is a guess.
+//
+// The bands are deliberately asymmetric — stepping *down* in distance is safer
+// than stepping up, because the endurance is certainly there — but they are
+// bounded in both directions. They used to have no floor at all, so any
+// downward guess was graded "fair" however absurd: a 1K predicted from a
+// marathon came out as confident as a 10K predicted from a 5K. Riegel is an
+// endurance formula and says little about the anaerobic end, so a big step
+// down is a rough guess too.
 export function confidence(baseKm, targetKm) {
   if (!(baseKm > 0) || !(targetKm > 0)) return "none";
   const ratio = targetKm / baseKm;
-  if (ratio <= 1.6 && ratio >= 0.5) return "high";
-  if (ratio <= 3) return "fair";
+  if (ratio >= 0.5 && ratio <= 1.6) return "high";
+  if (ratio >= 0.25 && ratio <= 3) return "fair";
   return "rough";
 }
 

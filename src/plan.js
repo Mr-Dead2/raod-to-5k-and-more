@@ -14,7 +14,13 @@ const clampKm = (v) => {
 };
 
 function normalizeDay(raw, di, km) {
-  const d = DAYS.includes((raw?.d || "").toUpperCase()) ? raw.d.toUpperCase() : DAYS[di];
+  // The label always comes from the slot, never from the reply. Days are
+  // positional here — index `di` *is* the day of the training week, and the
+  // row renders in array order — so honouring a model's own label could only
+  // ever disagree with where the day actually sits. Trusting it produced weeks
+  // with two Mondays and no Tuesday whenever a reply repeated or reordered
+  // labels, which the whole point of this module is to prevent.
+  const d = DAYS[di];
   let type = TYPES.includes((raw?.type || "").toLowerCase()) ? raw.type.toLowerCase() : null;
   if (!type) type = km > 0 ? "run" : "rest"; // infer from distance when missing/invalid
   const title = (typeof raw?.title === "string" && raw.title.trim()) || (km > 0 ? `${km} km` : "Rest");

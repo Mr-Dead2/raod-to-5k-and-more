@@ -24,7 +24,13 @@ appId would install as a separate app and orphan the user's data, so leave it.
 - `npm run icons` — regenerate PWA PNG icons from the inline SVG in
   `scripts/gen-icons.mjs` (requires `sharp`). Re-run after changing the icon.
 
-There is no test suite or linter configured.
+- `npm test` — run the Vitest suite (`npm run test:watch` to keep it running).
+
+There is no linter configured. Tests cover the pure modules only — `goals.js`,
+`plan.js`, `health.js` and `coach.js` — via its own `vitest.config.js`, because
+the app's `vite.config.js` loads the Cloudflare plugin, which throws under the
+runner. Anything needing a DOM, a canvas or a native bridge is verified by
+driving the built app in Chromium instead.
 
 ## Deployment
 

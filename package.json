@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run --config vitest.config.js",
+    "test:watch": "vitest --config vitest.config.js",
     "build": "vite build",
     "preview": "npm run build && wrangler dev",
     "icons": "node scripts/gen-icons.mjs",
@@ -40,6 +42,7 @@
     "sharp": "^0.33.5",
     "vite": "^6.0.7",
     "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^2.1.8",
     "wrangler": "^4.98.0"
   }
 }
