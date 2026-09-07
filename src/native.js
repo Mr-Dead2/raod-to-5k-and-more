@@ -235,6 +235,31 @@ export async function nativeBootstrapNotifications() {
   } catch { return "denied"; }
 }
 
+/**
+ * Write a backup to the phone's Documents folder without opening a share sheet.
+ *
+ * This is the automatic safety net: everything the app knows lives in
+ * localStorage on one device, so a cleared cache or a lost phone takes the lot.
+ * A file the user never has to think about is the difference between an
+ * annoyance and losing a training history. Returns the path written, or null.
+ */
+export async function nativeWriteBackup(json, filename) {
+  if (!isNative()) return null;
+  try {
+    const { Filesystem, Directory, Encoding } = await import("@capacitor/filesystem");
+    await Filesystem.writeFile({
+      path: `Stride/${filename}`,
+      data: json,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+      recursive: true,
+    });
+    return `Documents/Stride/${filename}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function nativeShareBackup(json, filename) {
   if (!isNative()) return false;
   try {

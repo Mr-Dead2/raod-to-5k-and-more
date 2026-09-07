@@ -13,6 +13,7 @@ import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
 import { WeatherStrip, useWeather } from "./components/Weather.jsx";
+import { backupState, backupLabel, countSessions, autoDue, backupFilename } from "./backup.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
@@ -33,7 +34,7 @@ import {
 } from "./health.js";
 import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
-  ensureLocationPermission, styleStatusBar, nativeShareBackup,
+  ensureLocationPermission, styleStatusBar, nativeShareBackup, nativeWriteBackup,
   nativeBootstrapNotifications, onAppResume,
 } from "./native.js";
 
@@ -215,6 +216,7 @@ export default function App() {
   const [statsView, setStatsView] = useState("overview"); // overview | goal | charts | awards | settings
   const [scrolled, setScrolled] = useState(false);
   const wx = useWeather({ enabled: tab === "plan" });
+  const [backupInfo, setBackupInfo] = useState({ lastBackupAt: null, sessionsAtLastBackup: 0 });
   const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
   // reminders + per-type notification switches
@@ -275,6 +277,7 @@ export default function App() {
     setStartDate(s.startDate || "");
     setAccent(applyAccent(s.accent));
     setUnitState(setUnit(s.unit));
+    setBackupInfo({ lastBackupAt: s.lastBackupAt || null, sessionsAtLastBackup: s.sessionsAtLastBackup || 0 });
     setCoachKey(s.groqKey || "");
     setCoachGoal(s.goal || DEFAULT_GOAL);
     setCoachModel(s.coachModel || DEFAULT_MODEL);
@@ -312,6 +315,25 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", h);
     return () => window.removeEventListener("beforeinstallprompt", h);
   }, []);
+
+  // Weekly automatic backup, native only. On the web a silent download would
+  // be a surprise; natively a file quietly appearing in Documents/Stride is
+  // exactly the safety net localStorage does not provide. Best-effort: a
+  // failure is never surfaced, because the manual export is still there.
+  useEffect(() => {
+    if (!loaded || !isNative()) return;
+    const s = loadSettings();
+    if (!autoDue({ lastAutoAt: s.lastAutoBackupAt, log })) return;
+    let cancelled = false;
+    (async () => {
+      const path = await nativeWriteBackup(backupPayload(), backupFilename());
+      if (cancelled || !path) return;
+      markBackedUp({ lastAutoBackupAt: new Date().toISOString() });
+    })();
+    return () => { cancelled = true; };
+    // Runs on load and whenever the log changes; autoDue() rate-limits it to
+    // once a week, so this is not a write per tick.
+  }, [loaded, log]);
 
   // The app bar is transparent over the top of the page and gains its glass
   // background once anything has scrolled under it — the cue that tells you a
@@ -697,16 +719,34 @@ export default function App() {
   };
 
   const importRef = useRef(null);
-  const exportData = async () => {
-    haptic(8);
+
+  // The backup payload, built once and reused by the manual export and the
+  // automatic native write.
+  const backupPayload = () => {
     // keep the secret Groq key out of backup files (export can open a share sheet)
     const { groqKey, ...safeSettings } = loadSettings();
-    const payload = { app: "stride", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } };
-    const json = JSON.stringify(payload, null, 2);
-    const filename = `stride-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    return JSON.stringify(
+      { app: "stride", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } },
+      null, 2,
+    );
+  };
+
+  // Remember not just *when* the log was written out but *how much* was in it,
+  // so the nag can be about unprotected work rather than the calendar.
+  const markBackedUp = (extra = {}) => {
+    const at = new Date().toISOString();
+    saveSettings({ ...loadSettings(), lastBackupAt: at, sessionsAtLastBackup: countSessions(log), ...extra });
+    setBackupInfo({ lastBackupAt: at, sessionsAtLastBackup: countSessions(log) });
+  };
+
+  const exportData = async () => {
+    haptic(8);
+    const json = backupPayload();
+    const filename = backupFilename();
     // native: Blob downloads don't work in the WebView — share the file instead
     if (isNative()) {
       const ok = await nativeShareBackup(json, filename);
+      if (ok) markBackedUp();
       setToast(ok ? { icon: "💾", title: "Backup ready to share", label: "BACKUP" }
                   : { icon: "⚠️", title: "Couldn't export backup", label: "BACKUP" });
       return;
@@ -717,6 +757,7 @@ export default function App() {
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
+    markBackedUp();
     setToast({ icon: "💾", title: "Backup downloaded", label: "BACKUP" });
   };
   // Accepts current (v2) and old (v1) backups, plus a raw log object copied
@@ -902,6 +943,12 @@ export default function App() {
   }, [history]);
 
   const unlocked = useMemo(() => unlockedIds(stats), [stats]);
+
+  // Is there unprotected work? Recomputed from the log, not the calendar.
+  const backup = useMemo(
+    () => backupState({ log, lastBackupAt: backupInfo.lastBackupAt, sessionsAtLastBackup: backupInfo.sessionsAtLastBackup }),
+    [log, backupInfo],
+  );
 
   // achievement unlock toast
   const prevUnlocked = useRef(null);
@@ -1678,7 +1725,24 @@ export default function App() {
             )}
 {/* Data & backup */}
             <Card style={{ marginBottom: 12 }}>
-              <Label>Data &amp; backup</Label>
+              <Label right={
+                <span style={{ fontSize: 11, fontWeight: 700, color: backup.stale ? C.warn : C.good }}>
+                  {backupLabel({ lastBackupAt: backupInfo.lastBackupAt })}
+                </span>
+              }>Data &amp; backup</Label>
+
+              {backup.stale && (
+                <div style={{
+                  display: "flex", gap: 9, alignItems: "flex-start", marginBottom: 12, padding: "10px 12px",
+                  borderRadius: 12, background: tint(C.warn, .1), border: `1px solid ${tint(C.warn, .32)}`,
+                }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }} aria-hidden="true">⚠️</span>
+                  <span style={{ fontSize: 11.5, color: C.text, lineHeight: 1.5 }}>
+                    {backup.reason} Everything lives on this phone only — export a copy somewhere safe.
+                  </span>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={exportData} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="download" size={14} /> Export</button>
                 <button onClick={() => importRef.current?.click()} className="chip tap" style={{ flex: 1, background: C.surface2, color: C.text, padding: "11px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}><Icon name="upload" size={14} /> Import</button>
@@ -1691,6 +1755,7 @@ export default function App() {
                   ? "Export opens the share sheet — send the backup file to Drive, email or your new phone, then Import it there."
                   : "Export saves your runs to a file; Import restores them (e.g. on a new phone or a new version of the app)."}
                 {" "}Importing merges with what's already here, so nothing gets wiped. Your data lives only on this device.
+                {isNative() ? " Stride also writes a dated copy to Documents/Stride once a week, so there is always something to fall back on." : ""}
               </div>
             </Card>
 {/* Stopwatch — treadmill / no-GPS fallback */}
@@ -2164,6 +2229,21 @@ export default function App() {
                   Notifications are off — reminders and run alerts can't reach you.
                 </span>
                 <span style={{ fontSize: 11.5, fontWeight: 800, color: C.warn, flexShrink: 0 }}>Fix →</span>
+              </button>
+            )}
+
+            {/* Unprotected work is worth a word here, not buried in settings:
+                localStorage is one cleared cache away from empty. */}
+            {backup.stale && (
+              <button onClick={() => { haptic(8); setTab("stats"); setStatsView("settings"); }} className="tap"
+                style={{
+                  width: "100%", padding: "12px 14px", marginBottom: 12, borderRadius: 16, cursor: "pointer",
+                  background: tint(C.accent, .1), color: C.text, border: `1px solid ${tint(C.accent, .38)}`,
+                  display: "flex", alignItems: "center", gap: 11, textAlign: "left",
+                }}>
+                <span style={{ color: C.accent, display: "flex" }}><Icon name="download" size={16} /></span>
+                <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.4, fontWeight: 600 }}>{backup.reason}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: C.accent, flexShrink: 0 }}>Back up →</span>
               </button>
             )}
 

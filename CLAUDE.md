@@ -321,6 +321,19 @@ front — the other headline reason to go native.
   80% of it beyond). Settings keys `goalRace` and `goalDate`; the Stats tab has
   the goal picker and the prediction board, and the Plan tab shows a countdown
   strip when a race date is set. Pure functions with no React — keep it that way.
+- **Backup safety net (`src/backup.js`).** Everything lives in `localStorage`
+  on one device, so a cleared cache or a lost phone takes the lot; export
+  existed but was manual and unreminded, which made it a safety net only for
+  people who did not need one. `backupState()` decides whether to speak up
+  from **unprotected work, not the calendar**: it stores `sessionsAtLastBackup`
+  alongside `lastBackupAt`, so a six-month-old backup stays silent while
+  nothing has been logged since, and four new sessions speak up however recent
+  the last export. Age is only a fallback trigger (21 days *with* unsaved work),
+  for someone who trains rarely. An empty log never nags.
+  Natively, `nativeWriteBackup()` also drops a dated copy into
+  `Documents/Stride` once a week (`autoDue()`), silently and best-effort — on
+  the web a surprise download would be worse than nothing. The Plan tab carries
+  the nudge, because that is where people look; Setup shows the status line.
 - **Weather (`src/weather.js` + `src/components/Weather.jsx`).** Open-Meteo:
   free, no API key, no account, no backend — the only kind of service that fits
   this app. The point is not a weather widget but the two decisions made before
