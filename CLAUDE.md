@@ -321,6 +321,24 @@ front — the other headline reason to go native.
   80% of it beyond). Settings keys `goalRace` and `goalDate`; the Stats tab has
   the goal picker and the prediction board, and the Plan tab shows a countdown
   strip when a race date is set. Pure functions with no React — keep it that way.
+- **Distance units (`src/units.js`).** Kilometres are canonical and stay that
+  way: every stored value — a log entry's `km`, a plan day's `km`, splits, GPS
+  distance, race distances — is metric on disk and in every calculation. This
+  module converts only at the edges, where a number is shown or typed. That
+  keeps one unit in the maths, keeps backups portable between a metric and an
+  imperial phone, and means switching units can never rewrite history. `U` is
+  mutated in place by `setUnit()` exactly like `C` is by `applyAccent()`, so a
+  re-render re-labels the whole app; `main.jsx` applies the persisted `unit`
+  setting before first render. `App.jsx`'s `DistanceInput` is the two-way case:
+  it shows the chosen unit, stores km, and keeps a local draft while focused so
+  a half-typed "5." is not converted and rewritten under the caret.
+  Two things deliberately do **not** convert. **Splits stay per kilometre**,
+  because that is when the tracker records one — mile splits cannot be derived
+  from km splits without interpolating times the runner never ran — so
+  `splitLabel()` says "km" in both units. And a *duration* is never converted
+  into a pace: the km-split notification says "Last kilometre at 5:00/km",
+  never "in", because the reworded pace stays true in miles where the duration
+  would not.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
   distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and

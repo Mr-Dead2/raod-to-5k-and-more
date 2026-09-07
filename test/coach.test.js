@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { streamCoach, buildSummary, quickAsks, MODELS, DEFAULT_MODEL } from "../src/coach.js";
+import { setUnit } from "../src/units.js";
 
 const REPLY = "Nine sessions in.\n- Pacing is steady.\nNext: 5 km continuous.";
 
@@ -134,8 +135,19 @@ describe("buildSummary", () => {
 
   it("marks a walk as a walk, so the coach cannot average it into pace", () => {
     const s = buildSummary({ stats, weekly, history });
-    expect(s.recentRuns.find((r) => r.km === 12.4).activity).toBe("walk");
-    expect(s.recentRuns.find((r) => r.km === 4.21).activity).toBe("run");
+    expect(s.recentRuns.find((r) => r.distance === 12.4).activity).toBe("walk");
+    expect(s.recentRuns.find((r) => r.distance === 4.21).activity).toBe("run");
+  });
+
+  it("names the unit every distance is in, so advice comes back in it", () => {
+    expect(buildSummary({ stats, weekly, history }).units).toBe("kilometres");
+    setUnit("mi");
+    const s = buildSummary({ stats, weekly, history });
+    expect(s.units).toBe("miles");
+    // 4.21 km is about 2.62 miles — the summary must not hand over raw km
+    // under a "miles" label.
+    expect(s.recentRuns.find((r) => r.activity === "run").distance).toBeCloseTo(2.62, 1);
+    setUnit("km");
   });
 
   it("carries today's session and what is coming, so 'what now?' is answerable", () => {
@@ -161,16 +173,16 @@ describe("buildSummary", () => {
   it("passes through the numbers the coach argues from", () => {
     const s = buildSummary({ stats, weekly, history, goal: "Run a 10K" });
     expect(s.goal).toBe("Run a 10K");
-    expect(s.totals.longestRunKm).toBe(4.21);
+    expect(s.totals.longestRun).toBe(4.21);
     expect(s.consistency.currentStreak).toBe(9);
-    expect(s.weeklyKm).toHaveLength(2);
+    expect(s.weeklyDistance).toHaveLength(2);
   });
 
   it("survives an empty log", () => {
     const empty = { ...stats, kmLogged: 0, runsLogged: 0, minTotal: 0, avgPaceSec: 0, bestPaceSec: 0, maxKm: 0 };
     const s = buildSummary({ stats: empty, weekly: [], history: [] });
     expect(s.recentRuns).toEqual([]);
-    expect(s.totals.kmLogged).toBe(0);
+    expect(s.totals.distanceLogged).toBe(0);
   });
 });
 

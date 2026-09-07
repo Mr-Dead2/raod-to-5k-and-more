@@ -6,6 +6,7 @@
 // Settings live in IndexedDB, not localStorage, because the service worker has
 // to read them while the app is closed.
 import { idbGet, idbSet } from "./idb.js";
+import { U, fmtDistNum, fmtPace as fmtPaceU } from "./units.js";
 import {
   isNative, nativeLiveRun, nativeEndLiveRun, nativeRunNotification,
   nativeEnsurePermission, nativeCheckPermission,
@@ -209,7 +210,9 @@ const LIVE_TAG = "stride-live";
 let liveAt = 0;              // throttle: rewriting too often spams some phones
 let liveOn = false;
 
-const pace = (sec) => (sec > 0 ? `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}` : null);
+// Notifications follow the runner's chosen unit like everything else — a
+// lock-screen notice in the wrong unit is worse than no notice.
+const pace = (secPerKm) => fmtPaceU(secPerKm);
 const clock = (sec) => {
   const s = Math.max(0, Math.round(sec)), h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60), r = s % 60, pad = (n) => String(n).padStart(2, "0");
@@ -227,7 +230,7 @@ export async function updateLiveRun({ km = 0, elapsedSec = 0, paceSec = 0, pause
   liveOn = true;
   const title = paused ? "Stride · run paused" : "Stride · run in progress";
   const p = pace(paceSec);
-  const body = `${km.toFixed(2)} km · ${clock(elapsedSec)}${p ? ` · ${p}/km` : ""}`;
+  const body = `${fmtDistNum(km, 2)} ${U.short} · ${clock(elapsedSec)}${p ? ` · ${p}/${U.short}` : ""}`;
   if (isNative()) return nativeLiveRun(title, body);
   return showNotice(title, body, {
     tag: LIVE_TAG,
@@ -262,7 +265,10 @@ export async function notifyRunKm(km, splitSec) {
   const r = await loadReminder();
   if (r.runKm === false) return false;
   const p = pace(splitSec);
-  return transient(`Stride · ${km} km done`, p ? `Last kilometre in ${p}. Keep the rhythm.` : "Keep the rhythm.", `stride-km-${km}`);
+  // "in 5:00" is a duration and must not be unit-converted; "at 5:00/km" is a
+  // pace and can be. The wording follows the number so the message stays true
+  // in both units — the split itself is always a kilometre.
+  return transient(`Stride · ${km} km done`, p ? `Last kilometre at ${p}/${U.short}. Keep the rhythm.` : "Keep the rhythm.", `stride-km-${km}`);
 }
 export async function notifyRunInterval(label) {
   const r = await loadReminder();
@@ -272,7 +278,7 @@ export async function notifyRunInterval(label) {
 export async function notifyRunFinish(distance, time, paceLabel) {
   const r = await loadReminder();
   if (r.runFinish === false) return false;
-  return transient("Stride · run complete", `${distance} km · ${time}${paceLabel ? ` · ${paceLabel}` : ""}`, "stride-finish");
+  return transient("Stride · run complete", `${distance} ${U.short} · ${time}${paceLabel ? ` · ${paceLabel}` : ""}`, "stride-finish");
 }
 export async function notifyMilestone(title, body) {
   const r = await loadReminder();

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { ShareSheet } from "./components/ShareSheet.jsx";
 import { copyText } from "./share.js";
+import { U, UNITS, setUnit, fmtDist, fmtDistNum, fmtPace as fmtPaceU, fmtPaceUnit, fmtElev, splitLabel, toDisplay, fromDisplay } from "./units.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
 import { RouteMaker } from "./components/RouteMaker.jsx";
 import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint } from "./data.js";
@@ -73,7 +74,8 @@ const paceSec = (min, km) => {
   if (!m || !k) return 0;
   return (m * 60) / k;
 };
-const fmtPace = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : null);
+// Pace is stored per kilometre and displayed in whatever unit the runner chose.
+const fmtPace = (s) => fmtPaceU(s);
 const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`);
 
 // 1–5 effort scale logged per session (user content, like the badge emoji).
@@ -104,6 +106,32 @@ function useCountUp(target, ms = 650) {
     return () => cancelAnimationFrame(raf);
   }, [target]);
   return v;
+}
+
+// A distance field in the runner's chosen unit that stores canonical km.
+//
+// It keeps a local draft while focused so half-typed values ("5.", "0.") are
+// not round-tripped through a conversion and rewritten under the caret; the
+// draft is dropped on blur and the stored km takes over again.
+function DistanceInput({ km, placeholderKm, onChangeKm, ...rest }) {
+  const [draft, setDraft] = useState(null);
+  const shown = draft != null
+    ? draft
+    : km === "" || km == null ? "" : String(Number(toDisplay(km).toFixed(2)));
+  return (
+    <input
+      className="inp" type="number" inputMode="decimal"
+      placeholder={String(Number(toDisplay(placeholderKm || 0).toFixed(2)))}
+      value={shown}
+      onChange={(e) => {
+        const v = e.target.value;
+        setDraft(v);
+        onChangeKm(v === "" ? "" : fromDisplay(v));
+      }}
+      onBlur={() => setDraft(null)}
+      {...rest}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +205,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [trackerOpen, setTrackerOpen] = useState(false);
   const [accent, setAccent] = useState("lime");
+  const [unit, setUnitState] = useState("km");
   const [histFilter, setHistFilter] = useState("all"); // all | run | gps
   const [openWeeks, setOpenWeeks] = useState({}); // completed weeks expanded by tap
   const [replayRun, setReplayRun] = useState(null); // run object being replayed
@@ -243,6 +272,7 @@ export default function App() {
     const s = loadSettings();
     setStartDate(s.startDate || "");
     setAccent(applyAccent(s.accent));
+    setUnitState(setUnit(s.unit));
     setCoachKey(s.groqKey || "");
     setCoachGoal(s.goal || DEFAULT_GOAL);
     setCoachModel(s.coachModel || DEFAULT_MODEL);
@@ -457,6 +487,14 @@ export default function App() {
       { flat: FLAT, log, startDate, includeWalks: next }));
   };
 
+  // Switching units only changes labels and the numbers on screen: every stored
+  // value stays in kilometres, so nothing in the log is rewritten.
+  const setUnitPref = (id) => {
+    setUnitState(setUnit(id));
+    saveSettings({ ...loadSettings(), unit: id });
+    haptic(8);
+  };
+
   const setAccentTheme = (id) => {
     setAccent(applyAccent(id)); // mutates C; the state change re-renders everything with it
     saveSettings({ ...loadSettings(), accent: id });
@@ -479,7 +517,8 @@ export default function App() {
   // should I do today? — gets answered by guesswork.
   const coachPlanContext = () => {
     const at = (i) => (i >= 0 && i < TOTAL ? FLAT[i] : null);
-    const brief = (f) => f && ({ week: f.week, day: f.d, type: f.type, title: f.title, detail: f.detail, km: f.km, done: !!(log[f.key] && log[f.key].done) });
+    // distance in the runner's unit, matching `units` in the summary
+    const brief = (f) => f && ({ week: f.week, day: f.d, type: f.type, title: f.title, detail: f.detail, distance: Number(fmtDistNum(f.km, 1)), done: !!(log[f.key] && log[f.key].done) });
     const startIdx = todayKey ? todayIdx : FLAT.findIndex((f) => !(log[f.key] && log[f.key].done));
     return {
       today: todayKey ? brief(at(todayIdx)) : null,
@@ -703,6 +742,7 @@ export default function App() {
         persist(merged);
         if (backup.settings.startDate) saveStart(backup.settings.startDate);
         if (backup.settings.accent) setAccentTheme(backup.settings.accent);
+        if (backup.settings.unit) setUnitPref(backup.settings.unit);
         if (backup.settings.customPlan) setActivePlan(backup.settings.customPlan);
         if (backup.settings.goalRace) saveGoalRace(backup.settings.goalRace);
         if (backup.settings.goalDate) saveGoalDate(backup.settings.goalDate);
@@ -757,14 +797,14 @@ export default function App() {
       raceName: goal ? goal.name : "Next race",
       time: goalPrediction ? fmtDuration(goalPrediction.sec) : "—",
       sub: goalPrediction && raceRef
-        ? `predicted from ${raceRef.km.toFixed(1)} km in ${fmtDuration(raceRef.sec)}`
+        ? `predicted from ${fmtDist(raceRef.km, 1)} in ${fmtDuration(raceRef.sec)}`
         : "log a timed run for a prediction",
-      distance: goal ? `${goal.km.toFixed(goal.km % 1 ? 1 : 0)} km` : "—",
+      distance: goal ? fmtDist(goal.km, goal.km % 1 ? 1 : 0) : "—",
       days: goalDate && goalDays != null && goalDays >= 0 ? goalDays : null,
       readiness: goalReady,
       note: goalReady >= 100
         ? "Longest run already covers the distance."
-        : goal ? `Longest run so far ${stats.maxKm || 0} km.` : "",
+        : goal ? `Longest run so far ${fmtDist(stats.maxKm || 0, 1)}.` : "",
       date: Date.now(),
     },
   });
@@ -1176,7 +1216,7 @@ export default function App() {
           <div className="rise">
             <Screen
               title="Your numbers"
-              sub={stats.runsLogged ? `${stats.runsLogged} run${stats.runsLogged === 1 ? "" : "s"} logged · ${stats.kmLogged.toFixed(1)} km covered` : "Log a session and this fills up"}
+              sub={stats.runsLogged ? `${stats.runsLogged} run${stats.runsLogged === 1 ? "" : "s"} logged · ${fmtDist(stats.kmLogged, 1)} covered` : "Log a session and this fills up"}
               action={<ShareBtn spec={progressShareSpec()} />} />
 
             <Segmented
@@ -1195,8 +1235,8 @@ export default function App() {
               <div className="card accented" style={{ borderRadius: 24, padding: "20px 20px 18px", marginBottom: 10, overflow: "hidden" }}>
                 <div className="lab">Total distance</div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 7, margin: "8px 0 14px" }}>
-                  <span className="num gtext" style={{ fontSize: 52, fontWeight: 700, lineHeight: 1 }}>{kmShown.toFixed(1)}</span>
-                  <span className="num" style={{ fontSize: 18, fontWeight: 700, color: C.dim }}>km</span>
+                  <span className="num gtext" style={{ fontSize: 52, fontWeight: 700, lineHeight: 1 }}>{fmtDistNum(kmShown, 1)}</span>
+                  <span className="num" style={{ fontSize: 18, fontWeight: 700, color: C.dim }}>{U.short}</span>
                 </div>
                 <Bar pct={pct} />
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, fontSize: 11.5, color: C.dim, fontWeight: 600 }}>
@@ -1221,8 +1261,8 @@ export default function App() {
                 <Tile label="On feet" value={stats.minTotal ? fmtMin(stats.minTotal) : "—"} delay={0.1} />
               </div>
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-                <Tile label="Avg pace" value={fmtPace(stats.avgPaceSec) || "—"} sub={stats.avgPaceSec ? "min / km" : ""} delay={0.15} />
-                <Tile label="Longest" value={stats.maxKm ? stats.maxKm : "—"} unit={stats.maxKm ? "km" : ""} delay={0.2} />
+                <Tile label="Avg pace" value={fmtPace(stats.avgPaceSec) || "—"} sub={stats.avgPaceSec ? U.paceLabel : ""} delay={0.15} />
+                <Tile label="Longest" value={stats.maxKm ? fmtDistNum(stats.maxKm, 1) : "—"} unit={stats.maxKm ? U.short : ""} delay={0.2} />
                 <Tile label="Stitches" value={stats.stitches} color={stats.stitches ? C.warn : C.easy} sub="should drop!" delay={0.25} />
               </div>
 
@@ -1230,13 +1270,13 @@ export default function App() {
             <Card style={{ marginBottom: 12 }}>
               <Label>Personal records</Label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <PB label="BEST PACE" value={fmtPace(stats.bestPaceSec) || "—"} unit="/km" color={C.accent} />
-                <PB label="LONGEST RUN" value={stats.maxKm ? stats.maxKm + " km" : "—"} />
-                <PB label="BIG WEEK" value={(Math.max(0, ...weekly.map((w) => w.value))).toFixed(1) + " km"} />
+                <PB label="BEST PACE" value={fmtPace(stats.bestPaceSec) || "—"} unit={`/${U.short}`} color={C.accent} />
+                <PB label="LONGEST RUN" value={stats.maxKm ? fmtDist(stats.maxKm, 1) : "—"} />
+                <PB label="BIG WEEK" value={fmtDist(Math.max(0, ...weekly.map((w) => w.value)), 1)} />
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <PB label="FASTEST KM" value={fmtPace(stats.bestSplitSec) || "—"} unit={stats.bestSplitSec ? "/km" : ""} color={C.accent} />
-                <PB label="BEST CLIMB" value={stats.bestElevM ? `+${stats.bestElevM} m` : "—"} />
+                <PB label="FASTEST KM" value={fmtPace(stats.bestSplitSec) || "—"} unit={stats.bestSplitSec ? `/${U.short}` : ""} color={C.accent} />
+                <PB label="BEST CLIMB" value={stats.bestElevM ? `+${fmtElev(stats.bestElevM)}` : "—"} />
                 <PB label="TOTAL KCAL" value={stats.totalKcal ? Math.round(stats.totalKcal).toLocaleString() : "—"} />
               </div>
             </Card>
@@ -1266,7 +1306,7 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
                   {goalPrediction && raceRef
-                    ? <>predicted from your {raceRef.km.toFixed(1)} km in {fmtDuration(raceRef.sec)}<br /><span style={{ color: C.dim2 }}>{CONFIDENCE_LABEL[goalPrediction.confidence]}</span></>
+                    ? <>predicted from your {fmtDist(raceRef.km, 1)} in {fmtDuration(raceRef.sec)}<br /><span style={{ color: C.dim2 }}>{CONFIDENCE_LABEL[goalPrediction.confidence]}</span></>
                     : "Log a timed run and a predicted finish appears here."}
                 </div>
               </div>
@@ -1280,7 +1320,7 @@ export default function App() {
                 <div style={{ fontSize: 10.5, color: C.dim2, marginTop: 6 }}>
                   {goal ? (goalReady >= 100
                     ? `Your longest run already covers the distance. You're ready.`
-                    : `Longest run so far ${stats.maxKm || 0} km. The ${goal.name} is ${goal.km.toFixed(goal.km % 1 ? 1 : 0)} km.`) : ""}
+                    : `Longest run so far ${fmtDist(stats.maxKm || 0, 1)}. The ${goal.name} is ${fmtDist(goal.km, 1)}.`) : ""}
                 </div>
               </div>
 
@@ -1292,7 +1332,7 @@ export default function App() {
             </Card>
 {/* Equivalent finish times across every distance */}
             <Card style={{ marginBottom: 12 }}>
-              <Label right={raceRef && <span style={{ fontSize: 10, color: C.dim2, fontWeight: 600 }}>from {raceRef.km.toFixed(1)} km</span>}>
+              <Label right={raceRef && <span style={{ fontSize: 10, color: C.dim2, fontWeight: 600 }}>from {fmtDist(raceRef.km, 1)}</span>}>
                 Race predictions
               </Label>
               {predictions.length === 0 ? (
@@ -1417,6 +1457,21 @@ export default function App() {
               </div>
               <div style={{ fontSize: 11, color: C.dim2, marginTop: 10 }}>
                 Every gradient, chart and highlight in the app follows this pair of colours.
+              </div>
+
+              <div style={{ height: 1, background: C.line, margin: "16px -18px" }} />
+
+              <Label>Distance unit</Label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {UNITS.map((u) => (
+                  <button key={u.id} onClick={() => setUnitPref(u.id)} className={`chip tap${unit === u.id ? " on" : ""}`}
+                    style={{ flex: 1, textAlign: "center" }}>{u.name}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: C.dim2, marginTop: 10, lineHeight: 1.5 }}>
+                Only what you see changes — every run is stored in kilometres, so switching back and
+                forth never alters a single logged distance. Splits stay per kilometre because that is
+                how they were recorded.
               </div>
             </Card>
 {/* Notifications */}
@@ -1573,7 +1628,7 @@ export default function App() {
                             </div>
                             <div style={{ textAlign: "right", flexShrink: 0 }}>
                               <div className="num" style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                                {r.entry.km > 0 ? `${r.entry.km} km` : `${r.entry.min} min`}
+                                {r.entry.km > 0 ? fmtDist(r.entry.km, 2) : `${r.entry.min} min`}
                               </div>
                               {r.entry.km > 0 && <div style={{ fontSize: 10.5, color: C.dim }}>{r.entry.min} min</div>}
                             </div>
@@ -1837,7 +1892,7 @@ export default function App() {
                       return (
                         <div key={w.n} style={{ marginBottom: 9 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>
-                            Week {w.n} · {w.label} <span className="num" style={{ color: C.dim, fontWeight: 600 }}>· {km.toFixed(1)} km</span>
+                            Week {w.n} · {w.label} <span className="num" style={{ color: C.dim, fontWeight: 600 }}>· {fmtDist(km, 1)}</span>
                           </div>
                           <div style={{ fontSize: 11, color: C.dim2, lineHeight: 1.55, marginTop: 2 }}>
                             {w.days.map((d) => `${d.d} ${d.km ? d.title : "rest"}`).join(" · ")}
@@ -1955,7 +2010,7 @@ export default function App() {
           <div className="rise">
             <Screen
               title="History"
-              sub={history.length ? `${shown.length} session${shown.length === 1 ? "" : "s"} · ${shownKm.toFixed(1)} km${shownMin ? ` · ${fmtMin(shownMin)}` : ""}` : "Every session you tick off lands here"}
+              sub={history.length ? `${shown.length} session${shown.length === 1 ? "" : "s"} · ${fmtDist(shownKm, 1)}${shownMin ? ` · ${fmtMin(shownMin)}` : ""}` : "Every session you tick off lands here"}
               action={history.length > 0 ? <ShareBtn spec={progressShareSpec()} /> : null} />
 
             {history.length > 0 && (
@@ -1990,10 +2045,10 @@ export default function App() {
                   const date = h.e.date ? new Date(h.e.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "—";
                   const hasRoute = h.e.route && h.e.route.length > 1;
                   const extras = [];
-                  if (h.e.elev > 0) extras.push(`▲ ${h.e.elev} m`);
+                  if (h.e.elev > 0) extras.push(`▲ ${fmtElev(h.e.elev)}`);
                   if (h.e.kcal > 0) extras.push(`${h.e.kcal} kcal`);
-                  if (h.e.runKm > 0) extras.push(`Run ${h.e.runKm} km`);
-                  if (h.e.walkKm > 0) extras.push(`Walk ${h.e.walkKm} km`);
+                  if (h.e.runKm > 0) extras.push(`Run ${fmtDist(h.e.runKm, 2)}`);
+                  if (h.e.walkKm > 0) extras.push(`Walk ${fmtDist(h.e.walkKm, 2)}`);
                   if (h.e.hrAvg > 0) extras.push(`♥ ${h.e.hrAvg} avg · ${h.e.hrMax} max`);
                   if (h.e.cadence > 0) extras.push(`${h.e.cadence} spm`);
                   return (
@@ -2029,9 +2084,9 @@ export default function App() {
                             </div>
                           </div>
                           <div style={{ textAlign: "right", flexShrink: 0 }}>
-                            {km > 0 && <div className="num gtext" style={{ fontSize: 21, fontWeight: 700, lineHeight: 1 }}>{km}<span style={{ fontSize: 11 }}> km</span></div>}
+                            {km > 0 && <div className="num gtext" style={{ fontSize: 21, fontWeight: 700, lineHeight: 1 }}>{fmtDistNum(km, 2)}<span style={{ fontSize: 11 }}> {U.short}</span></div>}
                             <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>
-                              {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/km` : ""}
+                              {h.e.min ? `${h.e.min} min` : ""}{p ? ` · ${p}/${U.short}` : ""}
                             </div>
                             {h.e.stitch && <div style={{ fontSize: 9, color: C.warn, fontWeight: 800, letterSpacing: 1, marginTop: 3 }}>STITCH</div>}
                           </div>
@@ -2052,7 +2107,7 @@ export default function App() {
                         {h.e.splits && h.e.splits.length > 0 && (
                           <div className="hscroll" style={{ marginTop: 8 }}>
                             {h.e.splits.map((s, i) => (
-                              <span key={i} className="chip" style={{ background: tint(C.text, .05), color: C.text, fontSize: 11, padding: "6px 11px", flexShrink: 0 }}>{i + 1}k · {fmtPace(s)}</span>
+                              <span key={i} className="chip" style={{ background: tint(C.text, .05), color: C.text, fontSize: 11, padding: "6px 11px", flexShrink: 0 }}>{splitLabel(i)} · {fmtPaceUnit(s)}</span>
                             ))}
                           </div>
                         )}
@@ -2141,8 +2196,8 @@ export default function App() {
                 {hero.km > 0 && (
                   <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 15, paddingTop: 14, borderTop: `1px solid ${tint(C.text, .07)}` }}>
                     <div>
-                      <div className="num gtext" style={{ fontSize: 27, fontWeight: 700, lineHeight: 1 }}>{hero.km}</div>
-                      <div className="lab" style={{ marginTop: 5 }}>km target</div>
+                      <div className="num gtext" style={{ fontSize: 27, fontWeight: 700, lineHeight: 1 }}>{fmtDistNum(hero.km, hero.km % 1 ? 1 : 0)}</div>
+                      <div className="lab" style={{ marginTop: 5 }}>{U.short} target</div>
                     </div>
                     {heroIdx >= 0 && (
                       <div>
@@ -2152,7 +2207,7 @@ export default function App() {
                     )}
                     {heroEntry.km > 0 && (
                       <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                        <div className="num" style={{ fontSize: 20, fontWeight: 700, color: C.good }}>{parseFloat(heroEntry.km)} km</div>
+                        <div className="num" style={{ fontSize: 20, fontWeight: 700, color: C.good }}>{fmtDist(parseFloat(heroEntry.km), 2)}</div>
                         <div className="lab" style={{ marginTop: 5 }}>logged</div>
                       </div>
                     )}
@@ -2255,7 +2310,7 @@ export default function App() {
                     style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9, padding: "0 2px" }}>
                     <span className="disp" style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: 1.4, color: weekDone ? C.accent : C.text }}>WEEK {w.n}</span>
                     <span style={{ fontSize: 11, color: C.dim, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.label}</span>
-                    <span className="num" style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim2, fontWeight: 700, flexShrink: 0 }}>{weekKm.toFixed(0)} km</span>
+                    <span className="num" style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim2, fontWeight: 700, flexShrink: 0 }}>{fmtDist(weekKm, 0)}</span>
                     <span className="num" style={{ fontSize: 11, color: weekDone ? C.accent : C.dim, fontWeight: 800, flexShrink: 0 }}>
                       {weekDone ? `✓ ${collapsed ? "▸" : "▾"}` : `${wDone}/${w.days.length}`}
                     </span>
@@ -2295,7 +2350,7 @@ export default function App() {
                             {isToday
                               ? <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 1, color: C.bg, background: C.grad, padding: "4px 8px", borderRadius: 999, flexShrink: 0 }}>TODAY</span>
                               : day.km > 0
-                                ? <span className="num" style={{ fontSize: 12, fontWeight: 700, color: e.done ? col : C.dim2, flexShrink: 0 }}>{day.km}<span style={{ fontSize: 9, color: C.dim2 }}>km</span></span>
+                                ? <span className="num" style={{ fontSize: 12, fontWeight: 700, color: e.done ? col : C.dim2, flexShrink: 0 }}>{fmtDistNum(day.km, day.km % 1 ? 1 : 0)}<span style={{ fontSize: 9, color: C.dim2 }}>{U.short}</span></span>
                                 : <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.rest, flexShrink: 0 }}>REST</span>}
                           </div>
 
@@ -2303,8 +2358,8 @@ export default function App() {
                             <div className="rise" style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderTop: "none", borderRadius: "0 0 14px 14px", padding: 14 }}>
                               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                                 <div style={{ flex: 1 }}>
-                                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE (km)</label>
-                                  <input className="inp" type="number" inputMode="decimal" placeholder={String(day.km || 0)} value={e.km ?? ""} onChange={(ev) => update(key, { km: ev.target.value })} />
+                                  <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE ({U.short})</label>
+                                  <DistanceInput km={e.km ?? ""} placeholderKm={day.km || 0} onChangeKm={(v) => update(key, { km: v })} />
                                 </div>
                                 <div style={{ flex: 1 }}>
                                   <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>TIME (min)</label>
@@ -2312,7 +2367,7 @@ export default function App() {
                                 </div>
                               </div>
                               {fmtPace(paceSec(e.min, e.km)) && (
-                                <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 10 }}>Pace: {fmtPace(paceSec(e.min, e.km))} / km</div>
+                                <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 10 }}>Pace: {fmtPaceUnit(paceSec(e.min, e.km))}</div>
                               )}
                               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
                                 <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>Side stitch hit?</span>

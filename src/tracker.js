@@ -5,6 +5,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { startLocationWatch } from "./geo.js";
 import { notifyRunKm, notifyRunFinish, updateLiveRun, endLiveRun } from "./notifications.js";
+import { U, fmtDistNum, fmtPace as fmtPaceU } from "./units.js";
 
 export function haversine(a, b) {
   const R = 6371000, toRad = (x) => (x * Math.PI) / 180;
@@ -37,7 +38,7 @@ export function useRunTracker(opts = {}) {
   const start=useCallback(()=>{setError(null);if(!startWatch())return;distRef.current=0;nextKm.current=1;splitBase.current=0;last.current=null;baseMs.current=0;kalman.current=null;alt.current=null;elevRef.current=0;maxSpeedRef.current=0;phaseDistRef.current={run:0,walk:0};lastPhaseRef.current=null;lastMoveAt.current=Date.now();setAuto(false);setDistanceM(0);setSplits([]);setPoints([]);setElapsedMs(0);setElevGainM(0);setMaxSpeedMs(0);setPhaseDist({run:0,walk:0});startedAt.current=Date.now();setStatus("tracking");acquireWake();startTicker();pushLiveRef.current(true)},[startWatch,acquireWake,startTicker]);
   const pause=useCallback(()=>{baseMs.current=liveElapsed();setAuto(false);clearInterval(ticker.current);setStatus("paused");releaseWake();pushLiveRef.current(true,true)},[releaseWake]);
   const resume=useCallback(()=>{startedAt.current=Date.now();lastMoveAt.current=Date.now();last.current=null;kalman.current=null;alt.current=null;setAuto(false);setStatus("tracking");acquireWake();startTicker();pushLiveRef.current(true)},[acquireWake,startTicker]);
-  const finish=useCallback(()=>{if(statusRef.current==="tracking")baseMs.current=liveElapsed();setElapsedMs(baseMs.current);setAuto(false);clearInterval(ticker.current);stopWatch();releaseWake();endLiveRun().catch?.(()=>{});setStatus("finished");const km=distRef.current/1000,sec=baseMs.current/1000;const pace=km>0?sec/km:0;notifyRunFinish(km.toFixed(2),`${Math.floor(sec/60)}:${String(Math.floor(sec%60)).padStart(2,"0")}`,pace?`${Math.floor(pace/60)}:${String(Math.round(pace%60)).padStart(2,"0")}/km`:"").catch?.(()=>{})},[releaseWake]);
+  const finish=useCallback(()=>{if(statusRef.current==="tracking")baseMs.current=liveElapsed();setElapsedMs(baseMs.current);setAuto(false);clearInterval(ticker.current);stopWatch();releaseWake();endLiveRun().catch?.(()=>{});setStatus("finished");const km=distRef.current/1000,sec=baseMs.current/1000;const pace=km>0?sec/km:0;notifyRunFinish(fmtDistNum(km,2),`${Math.floor(sec/60)}:${String(Math.floor(sec%60)).padStart(2,"0")}`,pace?`${fmtPaceU(pace)}/${U.short}`:"").catch?.(()=>{})},[releaseWake]);
   const reset=useCallback(()=>{clearInterval(ticker.current);stopWatch();releaseWake();endLiveRun().catch?.(()=>{});setAuto(false);kalman.current=null;alt.current=null;elevRef.current=0;maxSpeedRef.current=0;phaseDistRef.current={run:0,walk:0};setStatus("idle");setElapsedMs(0);setDistanceM(0);setPoints([]);setSplits([]);setError(null);setAccuracy(null);setElevGainM(0);setMaxSpeedMs(0);setPhaseDist({run:0,walk:0})},[releaseWake]);
   useEffect(()=>()=>{clearInterval(ticker.current);stopWatch();releaseWake();endLiveRun().catch?.(()=>{})},[releaseWake]);
   return{status,autoPaused,elapsedMs,distanceM,points,splits,accuracy,error,elevGainM,maxSpeedMs,phaseDist,start,pause,resume,finish,reset};

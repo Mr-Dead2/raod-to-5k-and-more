@@ -7,6 +7,7 @@ import { ensureLocationPermission, isNative } from "../native.js";
 import { primeAudio, beep, speak, paceWords } from "../cues.js";
 import { loadSettings, saveSettings } from "../storage.js";
 import { useHeartRate, hrSupported } from "../hr.js";
+import { U, isMiles, paceToDisplay, fmtDistNum, fmtPace as fmtPaceU, fmtPaceUnit, fmtElev, fmtWeight, speedToDisplay, speedLabel, splitLabel, toDisplay, fromDisplay } from "../units.js";
 import { useStepCounter, cadenceSupported, ensureMotionPermission } from "../cadence.js";
 import { notifyRunInterval, primeRunNotifications } from "../notifications.js";
 
@@ -19,7 +20,8 @@ const fmtTime = (ms) => {
   const mm = String(m).padStart(2, "0"), ss = String(sec).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
-const fmtPace = (secPerKm) => (secPerKm && isFinite(secPerKm) ? `${Math.floor(secPerKm / 60)}:${String(Math.round(secPerKm % 60)).padStart(2, "0")}` : "--:--");
+// Pace is measured per kilometre and shown in whatever unit the runner chose.
+const fmtPace = (secPerKm) => fmtPaceU(secPerKm) || "--:--";
 
 function recentPaceSec(points, windowM = 200) {
   if (points.length < 2) return 0;
@@ -79,8 +81,8 @@ function PhaseBreakdown({ runM, walkM, runSec, walkSec }) {
   const row = (label, m, sec, color) => (
     <div className="card" style={{ flex: 1, borderRadius: 14, padding: "10px", textAlign: "center", borderColor: tint(color, .35), background: `linear-gradient(160deg,${tint(color, .13)},${C.surface} 70%)` }}>
       <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color }}>{label}</div>
-      <div className="num" style={{ fontSize: 17, fontWeight: 700, marginTop: 2 }}>{(m / 1000).toFixed(2)} km</div>
-      <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0)}/km</div>
+      <div className="num" style={{ fontSize: 17, fontWeight: 700, marginTop: 2 }}>{fmtDistNum(m / 1000, 2)} {U.short}</div>
+      <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0)}/{U.short}</div>
     </div>
   );
   return (
@@ -171,7 +173,9 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
     if (t.splits.length > prevSplits.current) {
       const k = t.splits.length, pace = t.splits[k - 1];
       beep(880, 200); haptic(12);
-      if (audioOn) speak(`${k} kilometer${k > 1 ? "s" : ""} done. Pace ${paceWords(pace)} per kilometer.`);
+      // The split itself is always a kilometre — that is when the tracker
+      // records one — but the pace is spoken in the runner's chosen unit.
+      if (audioOn) speak(`${k} kilometer${k > 1 ? "s" : ""} done. Pace ${paceWords(paceToDisplay(pace))} per ${isMiles() ? "mile" : "kilometer"}.`);
     }
     prevSplits.current = t.splits.length;
   }, [t.splits, audioOn]);
@@ -200,15 +204,15 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
     goalPct = Math.min(1, km / goalDist);
     const rem = Math.max(0, goalDist - km);
     const eta = rem > 0 && avgPace > 0 ? rem * avgPace : 0;
-    goalName = `${goalDist} km`;
-    goalSub = goalDone ? "Goal reached 🎉" : `${rem.toFixed(2)} km to go${eta ? ` · ~${fmtTime(eta * 1000)} left` : ""}`;
+    goalName = `${fmtDistNum(goalDist, goalDist % 1 ? 1 : 0)} ${U.short}`;
+    goalSub = goalDone ? "Goal reached 🎉" : `${fmtDistNum(rem, 2)} ${U.short} to go${eta ? ` · ~${fmtTime(eta * 1000)} left` : ""}`;
   } else if (goalType === "time" && goalTime > 0) {
     const em = elapsedSec / 60;
     goalDone = em >= goalTime;
     goalPct = Math.min(1, em / goalTime);
     const remSec = Math.max(0, goalTime * 60 - elapsedSec);
     goalName = `${goalTime} min`;
-    goalSub = goalDone ? "Goal reached 🎉" : `${fmtTime(remSec * 1000)} to go · ${km.toFixed(2)} km so far`;
+    goalSub = goalDone ? "Goal reached 🎉" : `${fmtTime(remSec * 1000)} to go · ${fmtDistNum(km, 2)} ${U.short} so far`;
   }
 
   // run/walk phase derived from elapsed time (so it freezes with pause/auto-pause)
@@ -243,7 +247,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
     if (goalActive && goalDone && !goalCued.current) {
       goalCued.current = true;
       haptic([0, 200, 100, 200, 100, 500]); beep(990, 500);
-      if (audioOnRef.current) speak(goalType === "distance" ? `Goal reached. ${goalDist} kilometers done.` : "Time goal reached. Great work.");
+      if (audioOnRef.current) speak(goalType === "distance" ? `Goal reached. ${fmtDistNum(goalDist, goalDist % 1 ? 1 : 0)} ${isMiles() ? "miles" : "kilometers"} done.` : "Time goal reached. Great work.");
     }
   }, [goalActive, goalDone, goalType, goalDist]);
 
@@ -359,7 +363,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
               </div>
             )}
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <StepCard label="WEIGHT" unit="KG" val={weightKg} set={setWeight} />
+              <StepCard label="WEIGHT" unit={fmtWeight(weightKg).split(" ")[1].toUpperCase()} val={Number(fmtWeight(weightKg).split(" ")[0])} set={(v) => setWeight(isMiles() ? v / 2.2046226218 : v)} />
             </div>
             <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>Weight is only used for the calorie estimate.</div>
 
@@ -375,7 +379,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
                 ))}
               </div>
               {goalType === "distance" && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="KM" val={goalDist} set={setGoalDistP} /></div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit={U.short.toUpperCase()} val={Number(toDisplay(goalDist).toFixed(1))} set={(fn) => setGoalDistP((km) => fromDisplay(typeof fn === "function" ? fn(Number(toDisplay(km).toFixed(1))) : fn))} /></div>
               )}
               {goalType === "time" && (
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="MIN" val={goalTime} set={setGoalTimeP} /></div>
@@ -490,7 +494,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
           {targetRoute && (
             <div style={{ maxWidth: 320, width: "100%", margin: "0 auto", background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 10, textAlign: "left" }}>
               <div style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{targetRoute.name} ({targetRoute.km} km)</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{targetRoute.name} ({fmtDistNum(targetRoute.km, 1)} {U.short})</div>
               <LiveMap points={[]} ghost={targetRoute.points} height={140} interactive={false} />
               <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Drawn as a dashed guide on your run map.</div>
             </div>
@@ -507,7 +511,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
       {(t.status === "tracking" || t.status === "paused") && (
         <div className="rise">
           <div style={{ textAlign: "center", margin: "10px 0 6px" }}>
-            <div className="num gtext" style={{ fontSize: 66, fontWeight: 700, lineHeight: .95 }}>{km.toFixed(2)}</div>
+            <div className="num gtext" style={{ fontSize: 66, fontWeight: 700, lineHeight: .95 }}>{fmtDistNum(km, 2)}</div>
             <div style={{ fontSize: 10, letterSpacing: 2.4, color: C.dim, fontWeight: 800, marginTop: 8 }}>KILOMETRES</div>
           </div>
           <div style={{ height: 22, textAlign: "center", marginBottom: 10 }}>
@@ -541,7 +545,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: cadenceOn || hrLive ? 10 : 18 }}>
             <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
-            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
+            <Big label="ELEV GAIN" value={`+${fmtElev(t.elevGainM)}`} />
             <Big label="KCAL" value={Math.round(kcal)} />
           </div>
           {cadenceOn && (
@@ -566,9 +570,9 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS / KM</div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS · PER KM</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{i + 1}k · {fmtPace(s)}</span>))}
+                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{splitLabel(i)} · {fmtPaceUnit(s)}</span>))}
               </div>
             </div>
           )}
@@ -588,14 +592,14 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
       {t.status === "finished" && (
         <div className="rise">
           <div style={{ display: "flex", marginBottom: 12 }}>
-            <Big label="DISTANCE" value={`${km.toFixed(2)}`} color={C.accent} />
+            <Big label={`DISTANCE (${U.short})`} value={fmtDistNum(km, 2)} color={C.accent} />
             <Big label="TIME" value={fmtTime(t.elapsedMs)} />
             <Big label="AVG PACE" value={`${fmtPace(avgPace)}`} />
           </div>
           <div style={{ display: "flex", marginBottom: 16 }}>
-            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
+            <Big label="ELEV GAIN" value={`+${fmtElev(t.elevGainM)}`} />
             <Big label="KCAL" value={Math.round(kcal)} />
-            <Big label="TOP SPEED" value={t.maxSpeedMs ? `${(t.maxSpeedMs * 3.6).toFixed(1)}` : "--"} />
+            <Big label={`TOP ${speedLabel().toUpperCase()}`} value={t.maxSpeedMs ? speedToDisplay(t.maxSpeedMs).toFixed(1) : "--"} />
           </div>
           {hrAvg > 0 && (
             <div style={{ display: "flex", marginBottom: 16 }}>
@@ -616,9 +620,9 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
 
           {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS / KM</div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS · PER KM</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{i + 1}k · {fmtPace(s)}</span>))}
+                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{splitLabel(i)} · {fmtPaceUnit(s)}</span>))}
               </div>
             </div>
           )}

@@ -1,5 +1,6 @@
 import React from "react";
 import { C, typeColor, tint } from "../data.js";
+import { U, fmtDistNum, fmtPace } from "../units.js";
 
 // N×7 calendar grid of the plan (one row per week). Each cell reflects a status.
 export function StreakGrid({ cells }) {
@@ -66,7 +67,7 @@ export function WeeklyBars({ data }) {
   const bw = (W - pad * 2 - gap * (data.length - 1)) / data.length;
   const y = (v) => H - pad - (v / max) * (H - pad * 2);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Kilometres logged per week">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Distance logged per week, in ${U.short === "mi" ? "miles" : "kilometres"}`}>
       <AccentDefs id="wb" />
       {data.map((d, i) => {
         const x = pad + i * (bw + gap);
@@ -81,7 +82,7 @@ export function WeeklyBars({ data }) {
               W{d.label}
             </text>
             <text x={x + bw / 2} y={y(Math.max(d.value, d.target)) - 5} textAnchor="middle" fontSize="9" fill={d.value ? C.accent : C.dim} fontWeight="700">
-              {d.value ? d.value.toFixed(1) : ""}
+              {d.value ? fmtDistNum(d.value, 1) : ""}
             </text>
           </g>
         );
@@ -106,7 +107,7 @@ export function PaceTrend({ points }) {
   const span = Math.max(max - min, 30); // keep near-flat trends readable
   const x = (i) => pad + (i / (points.length - 1)) * (W - pad * 2);
   const y = (v) => pad + ((v - min) / span) * (H - pad * 2 - 14);
-  const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  const fmt = (s) => fmtPace(s) || "—";
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.sec).toFixed(1)}`).join(" ");
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Pace per run over time">
@@ -117,7 +118,7 @@ export function PaceTrend({ points }) {
       ))}
       <text x={pad} y={H - 6} fontSize="10" fill={C.dim} fontWeight="700">{points.length} runs</text>
       <text x={W - pad} y={H - 6} textAnchor="end" fontSize="10" fill={C.accent} fontWeight="700">
-        best {fmt(min)} /km
+        best {fmt(min)} /{U.short}
       </text>
     </svg>
   );
@@ -148,7 +149,7 @@ export function CumulativeArea({ points }) {
       ))}
       <text x={pad} y={H - 6} fontSize="10" fill={C.dim} fontWeight="700">0</text>
       <text x={W - pad} y={H - 6} textAnchor="end" fontSize="10" fill={C.accent} fontWeight="700">
-        {max.toFixed(0)} km
+        {fmtDistNum(max, 0)} {U.short}
       </text>
     </svg>
   );

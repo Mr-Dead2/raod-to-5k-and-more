@@ -5,12 +5,14 @@ import App from "./App.jsx";
 import "./app.css";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { applyAccent, applyPlan } from "./data.js";
+import { setUnit } from "./units.js";
 import { loadSettings } from "./storage.js";
 import { isNative } from "./native.js";
 
 const _s = loadSettings();
 applyAccent(_s.accent);
 applyPlan(_s.customPlan);
+setUnit(_s.unit);
 
 document.documentElement.style.background = "#07080b";
 document.body.style.margin = "0";

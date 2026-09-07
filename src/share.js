@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 import { C, tint } from "./data.js";
 import { isNative } from "./native.js";
+import { U, fmtDistNum, fmtPace as fmtPaceU, fmtElev, splitLabel } from "./units.js";
 
 // Cards are laid out in these logical units and rendered at SCALE for crispness.
 // 540×540 → 1080×1080, 540×960 → 1080×1920, 640×335 → 1280×670.
@@ -35,8 +36,8 @@ const BODY = "'Manrope', system-ui, sans-serif";
 
 // --- formatting ------------------------------------------------------------
 
-export const fmtPace = (s) =>
-  s && isFinite(s) && s > 0 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : null;
+// Cards follow the runner's chosen unit, so a shared card matches the app.
+export const fmtPace = (s) => fmtPaceU(s);
 
 export const fmtClock = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -261,7 +262,7 @@ function drawSplits(ctx, splits, x, y, w, h) {
   ctx.fillStyle = C.dim2;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  for (const i of new Set(marks)) ctx.fillText(`${i + 1}k`, x + i * (bw + gap) + bw / 2, y + h + 6);
+  for (const i of new Set(marks)) ctx.fillText(splitLabel(i), x + i * (bw + gap) + bw / 2, y + h + 6);
   ctx.textAlign = "left";
 }
 
@@ -379,11 +380,11 @@ function runFacts(run) {
   const durMs = run.durMs || (run.min ? run.min * 60000 : 0);
   const paceS = km > 0 && durMs > 0 ? durMs / 1000 / km : 0;
   const chips = [];
-  if (run.elev > 0) chips.push(`▲ ${run.elev} m climb`);
+  if (run.elev > 0) chips.push(`▲ ${fmtElev(run.elev)} climb`);
   if (run.kcal > 0) chips.push(`${run.kcal} kcal`);
   if (run.hrAvg > 0) chips.push(`♥ ${run.hrAvg} avg bpm`);
   if (run.cadence > 0) chips.push(`${run.cadence} spm`);
-  if (run.runKm > 0 && run.walkKm > 0) chips.push(`${run.runKm} run · ${run.walkKm} walk`);
+  if (run.runKm > 0 && run.walkKm > 0) chips.push(`${fmtDistNum(run.runKm, 1)} run · ${fmtDistNum(run.walkKm, 1)} walk`);
   return { km, durMs, paceS, chips };
 }
 
@@ -462,15 +463,15 @@ function drawRunBody(ctx, g) {
     const cy = top + height / 2;
     const size = wide ? 96 : fmt.id === "story" ? 150 : 128;
     ctx.font = `700 ${size}px ${DISP}`;
-    const num = km.toFixed(2);
+    const num = fmtDistNum(km, 2);
     const numW = ctx.measureText(num);
     text(ctx, num, W / 2, cy - size * 0.18, {
       font: `700 ${size}px ${DISP}`,
       color: accentGradient(ctx, W / 2 - numW.width / 2, cy - size, numW.width, size * 1.4),
       align: "center", baseline: "middle",
     });
-    label(ctx, "kilometres", W / 2, cy + size * 0.36, C.dim, wide ? 11 : 13, "center");
-    const line = [fmtClock(durMs), fmtPace(paceS) ? `${fmtPace(paceS)} /km` : null].filter(Boolean).join("   ·   ");
+    label(ctx, U.short === "mi" ? "miles" : "kilometres", W / 2, cy + size * 0.36, C.dim, wide ? 11 : 13, "center");
+    const line = [fmtClock(durMs), fmtPace(paceS) ? `${fmtPace(paceS)} /${U.short}` : null].filter(Boolean).join("   ·   ");
     if (line) {
       text(ctx, line, W / 2, cy + size * 0.36 + (wide ? 34 : 46), {
         font: `700 ${wide ? 16 : 20}px ${DISP}`, color: C.text, align: "center", baseline: "top",
@@ -489,14 +490,14 @@ function drawRunBody(ctx, g) {
     const x = pad + (hasRoute ? mapW + 20 : 0);
     const w = W - pad - x;
     ctx.font = `700 76px ${DISP}`;
-    const numW = ctx.measureText(km.toFixed(2)).width;
-    text(ctx, km.toFixed(2), x, top - 4, {
+    const numW = ctx.measureText(fmtDistNum(km, 2)).width;
+    text(ctx, fmtDistNum(km, 2), x, top - 4, {
       font: `700 76px ${DISP}`, color: accentGradient(ctx, x, top, numW, 76), baseline: "top",
     });
-    text(ctx, "km", x + numW + 8, top + 48, { font: `700 22px ${DISP}`, color: C.dim, baseline: "alphabetic" });
+    text(ctx, U.short, x + numW + 8, top + 48, { font: `700 22px ${DISP}`, color: C.dim, baseline: "alphabetic" });
     drawStatRow(ctx, [
       { label: "Time", value: fmtClock(durMs) },
-      { label: "Pace", value: fmtPace(paceS) || "—", unit: fmtPace(paceS) ? "/km" : "" },
+      { label: "Pace", value: fmtPace(paceS) || "—", unit: fmtPace(paceS) ? `/${U.short}` : "" },
     ], x - 14, top + 92, w + 14, { size: 26 });
     return;
   }
@@ -519,13 +520,13 @@ function drawRunBody(ctx, g) {
 
   const drawHero = (y) => {
     ctx.font = `700 ${heroSize}px ${DISP}`;
-    const numTxt = km.toFixed(2);
+    const numTxt = fmtDistNum(km, 2);
     const numW = ctx.measureText(numTxt).width;
     text(ctx, numTxt, pad, y, {
       font: `700 ${heroSize}px ${DISP}`,
       color: accentGradient(ctx, pad, y, numW, heroSize), baseline: "top",
     });
-    text(ctx, "km", pad + numW + 10, y + heroSize * 0.63, {
+    text(ctx, U.short, pad + numW + 10, y + heroSize * 0.63, {
       font: `700 ${heroSize * 0.28}px ${DISP}`, color: C.dim, baseline: "alphabetic",
     });
     if (run.title) {
@@ -536,10 +537,10 @@ function drawRunBody(ctx, g) {
 
   const statCells = [
     { label: "Time", value: fmtClock(durMs) },
-    { label: "Avg pace", value: fmtPace(paceS) || "—", unit: fmtPace(paceS) ? "/km" : "" },
+    { label: "Avg pace", value: fmtPace(paceS) || "—", unit: fmtPace(paceS) ? `/${U.short}` : "" },
   ];
   if (run.kcal > 0) statCells.push({ label: "Calories", value: String(run.kcal) });
-  else if (run.elev > 0) statCells.push({ label: "Climb", value: `${run.elev}`, unit: "m" });
+  else if (run.elev > 0) statCells.push({ label: "Climb", value: fmtElev(run.elev).split(" ")[0], unit: fmtElev(run.elev).split(" ")[1] });
 
   const drawStats = (y) => {
     panel(ctx, pad, y, inner, statBoxH, { r: 18 });
@@ -592,7 +593,7 @@ function drawRunBody(ctx, g) {
     const heroBlock = blocks.find((b) => b.key === "hero");
     const others = blocks.reduce((sum, b) => sum + b.h, 0) - heroBlock.h + gap * Math.max(0, blocks.length - 1);
     ctx.font = `700 100px ${DISP}`;
-    const perPx = ctx.measureText(km.toFixed(2)).width / 100;
+    const perPx = ctx.measureText(fmtDistNum(km, 2)).width / 100;
     const grown = Math.min(story ? 210 : 150, (inner - 66) / perPx, Math.max(heroSize, height - others - 24));
     heroBlock.h += grown - heroSize;
     heroSize = grown;
@@ -674,7 +675,7 @@ function drawProgressBody(ctx, g) {
     const x = pad + ringR * 2 + 26;
     text(ctx, d.headline || "Training block", x, top + 6, { font: `700 24px ${DISP}`, color: C.text, baseline: "top" });
     drawStatRow(ctx, [
-      { label: "Distance", value: d.km.toFixed(1), unit: "km" },
+      { label: "Distance", value: fmtDistNum(d.km, 1), unit: U.short },
       { label: "Runs", value: String(d.runs) },
       { label: "Streak", value: `${d.streak}`, unit: "d" },
     ], x - 14, top + 44, W - pad - x + 14, { size: 26, heroIndex: 0 });
@@ -687,20 +688,20 @@ function drawProgressBody(ctx, g) {
   const headlineH = story ? 32 : 27;
 
   const cells1 = [
-    { label: "Distance", value: d.km.toFixed(1), unit: "km" },
+    { label: "Distance", value: fmtDistNum(d.km, 1), unit: U.short },
     { label: "Runs", value: String(d.runs) },
     { label: "Streak", value: String(d.streak), unit: "d" },
   ];
   const cells2 = [
-    { label: "Avg pace", value: d.pace || "—", unit: d.pace ? "/km" : "" },
-    { label: "Longest", value: d.longest ? d.longest.toFixed(1) : "—", unit: d.longest ? "km" : "" },
+    { label: "Avg pace", value: d.pace || "—", unit: d.pace ? `/${U.short}` : "" },
+    { label: "Longest", value: d.longest ? fmtDistNum(d.longest, 1) : "—", unit: d.longest ? U.short : "" },
     { label: "Time", value: d.time || "—" },
   ];
 
   const hasBars = Array.isArray(d.weekly) && d.weekly.length > 0;
 
   const drawBars = (y, h) => {
-    label(ctx, "Kilometres per week", pad, y, C.dim, 9.5);
+    label(ctx, `${U.short === "mi" ? "Miles" : "Kilometres"} per week`, pad, y, C.dim, 9.5);
     const chartY = y + 20, chartH = h - 20 - 16;
     const max = Math.max(1, ...d.weekly.map((w) => Math.max(w.value, w.target || 0)));
     const bgap = 10;
@@ -874,14 +875,14 @@ export function cardText(spec) {
   const d = spec.data || {};
   if (spec.kind === "run") {
     const { km, durMs, paceS } = runFacts(d);
-    const bits = [`🏃 ${km.toFixed(2)} km in ${fmtClock(durMs)}`];
-    if (fmtPace(paceS)) bits.push(`${fmtPace(paceS)} /km`);
-    if (d.elev > 0) bits.push(`+${d.elev} m`);
+    const bits = [`🏃 ${fmtDistNum(km, 2)} ${U.short} in ${fmtClock(durMs)}`];
+    if (fmtPace(paceS)) bits.push(`${fmtPace(paceS)} /${U.short}`);
+    if (d.elev > 0) bits.push(`+${fmtElev(d.elev)}`);
     if (d.kcal > 0) bits.push(`${d.kcal} kcal`);
     return `${bits.join(" · ")}\nTracked with Stride`;
   }
   if (spec.kind === "progress") {
-    return `🏃 ${d.km.toFixed(1)} km logged over ${d.runs} run${d.runs === 1 ? "" : "s"} — ${d.done}/${d.total} sessions done (${Math.round(d.pct)}%).${d.streak ? ` ${d.streak}-day streak.` : ""}\nTracked with Stride`;
+    return `🏃 ${fmtDistNum(d.km, 1)} ${U.short} logged over ${d.runs} run${d.runs === 1 ? "" : "s"} — ${d.done}/${d.total} sessions done (${Math.round(d.pct)}%).${d.streak ? ` ${d.streak}-day streak.` : ""}\nTracked with Stride`;
   }
   if (spec.kind === "achievement") {
     return `${d.icon || "🏅"} Unlocked “${d.title}” in Stride — ${d.desc || ""}`.trim();

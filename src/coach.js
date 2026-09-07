@@ -5,6 +5,7 @@
 // settings, on-device only) and the request goes straight from the browser to
 // api.groq.com. Free, fast, and private to the user's device.
 import { TOTAL } from "./data.js";
+import { U, isMiles, fmtDistNum, paceToDisplay } from "./units.js";
 
 export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 export const DEFAULT_MODEL = "llama-3.3-70b-versatile";
@@ -21,7 +22,7 @@ export const MODELS = [
   { id: "openai/gpt-oss-20b", name: "GPT-OSS 20B", note: "Quick reasoning" },
 ];
 
-const pace = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}/km` : "—");
+const pace = (s) => { const v = paceToDisplay(s); return v ? `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}/${U.short}` : "—"; };
 const mins = (m) => (m ? `${Math.round(m)} min` : "—");
 
 // Build a compact, model-friendly snapshot of everything the app knows about
@@ -37,7 +38,7 @@ export function buildSummary({ stats, weekly, history, goal, race, plan }) {
       return {
         date: h.e.date ? h.e.date.slice(0, 10) : null,
         session: `${h.title} — ${h.detail}`,
-        km: Number(km.toFixed(2)),
+        distance: Number(fmtDistNum(km, 2)),
         min: min ? Number(min.toFixed(1)) : null,
         pace: p ? pace(p) : null,
         // Walks imported from a watch are sessions, not runs. Saying so stops
@@ -54,6 +55,10 @@ export function buildSummary({ stats, weekly, history, goal, race, plan }) {
   const now = new Date();
   return {
     goal: goal || DEFAULT_GOAL,
+    // Every distance below is in this unit, and the coach should answer in it
+    // too — telling a miles runner to "add 2 km" is the wrong advice in the
+    // wrong language.
+    units: isMiles() ? "miles" : "kilometres",
     // Without this the coach cannot answer the most obvious question anyone
     // asks a coach — "what should I do today?" — and guesses at a session the
     // app already knows.
@@ -73,14 +78,14 @@ export function buildSummary({ stats, weekly, history, goal, race, plan }) {
     raceGoal: race || null,
     planProgress: `${stats.done}/${TOTAL} plan sessions done`,
     totals: {
-      kmLogged: Number(stats.kmLogged.toFixed(1)),
+      distanceLogged: Number(fmtDistNum(stats.kmLogged, 1)),
       runs: stats.runsLogged,
       timeOnFeet: mins(stats.minTotal),
       avgPace: pace(stats.avgPaceSec),
       bestPace: pace(stats.bestPaceSec),
-      longestRunKm: stats.maxKm,
+      longestRun: Number(fmtDistNum(stats.maxKm, 2)),
       fastestKm: pace(stats.bestSplitSec),
-      bestClimbM: stats.bestElevM || 0,
+      bestClimbM: stats.bestElevM || 0, // always metres
       totalKcal: Math.round(stats.totalKcal || 0),
     },
     consistency: {
@@ -88,7 +93,7 @@ export function buildSummary({ stats, weekly, history, goal, race, plan }) {
       bestStreak: stats.best,
       runsWithStitch: stats.stitches,
     },
-    weeklyKm: weekly.map((w) => ({ week: w.label, logged: Number(w.value.toFixed(1)), planTarget: w.target })),
+    weeklyDistance: weekly.map((w) => ({ week: w.label, logged: Number(fmtDistNum(w.value, 1)), planTarget: Number(fmtDistNum(w.target, 1)) })),
     recentRuns: recent,
     // sessions the runner flagged as too easy / just right / too hard
     sessionFeedback: history
@@ -103,6 +108,7 @@ const PERSONA = [
   "You are an upbeat, expert running coach inside a '5K and beyond' phone app.",
   "Be specific and practical, grounded in the runner's data below — never generic.",
   "If the data is thin, say what to log next. Always steer toward the runner's goal.",
+  "Use the runner's own distance unit (see `units` in the data) for every distance.",
   "",
   "Plain text only: no markdown headers, no ** bold **, no tables. Short paragraphs",
   "and '- ' bullet lines are fine. Keep normal replies under 160 words; only go",
