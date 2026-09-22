@@ -92,6 +92,19 @@ export async function readWorkouts(days = 30) {
   } catch { return []; }
 }
 
+// Heart-rate samples Health Connect holds for a window — whatever wrote them.
+// For a Galaxy Watch that is Samsung Health, relaying what the watch measured:
+// a Tizen watch cannot stream its pulse to an app live, but what it recorded
+// arrives here once the watch has synced. Resolves to { count, avg, max }, or
+// null when Health Connect could not be asked.
+export async function readHeartRate(startMs, endMs) {
+  if (!healthSupported()) return null;
+  try {
+    const r = await HealthConnect.readHeartRate({ startTime: String(Math.round(startMs)), endTime: String(Math.round(endMs)) });
+    return { count: r.count || 0, avg: r.avg || 0, max: r.max || 0, sources: r.sources || [] };
+  } catch { return null; }
+}
+
 // --- pure mapping ----------------------------------------------------------
 
 const DAY_MS = 86400000;
@@ -102,6 +115,14 @@ const localISODate = (ms) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+// Steps per minute, only when the figure is one a person on foot can produce
+// — a stray step total over a long session must not become a "cadence of 12".
+export function cadenceOf(steps, minutes) {
+  if (!(steps > 0) || !(minutes > 0)) return 0;
+  const spm = Math.round(steps / minutes);
+  return spm >= 60 && spm <= 240 ? spm : 0;
+}
+
 /**
  * A Health Connect workout in the shape `update()` stores. Distance and
  * duration are the only things a session is guaranteed to carry; everything
@@ -111,6 +132,7 @@ const localISODate = (ms) => {
 export function workoutToEntry(w) {
   const km = w.distanceM > 0 ? Number((w.distanceM / 1000).toFixed(2)) : 0;
   const min = Number(Math.max(0, (w.endTime - w.startTime) / 60000).toFixed(1));
+  const cadence = cadenceOf(w.steps, (w.endTime - w.startTime) / 60000);
   return {
     done: true,
     km,
@@ -122,11 +144,55 @@ export function workoutToEntry(w) {
     activity: exerciseKind(w.exerciseType) || "run",
     hcId: w.id,
     hcSource: w.source || null,
+    // What the watch called it ("Running"), for when the plan day it lands on
+    // was something else — a watch run on a rest day is still a run.
+    hcLabel: exerciseName(w.exerciseType, w.title),
     ...(w.kcal > 0 ? { kcal: Math.round(w.kcal) } : {}),
     ...(w.hrAvg > 0 ? { hrAvg: Math.round(w.hrAvg) } : {}),
     ...(w.hrMax > 0 ? { hrMax: Math.round(w.hrMax) } : {}),
     ...(w.steps > 0 ? { steps: Math.round(w.steps) } : {}),
+    ...(cadence ? { cadence } : {}),
   };
+}
+
+/**
+ * When a run Stride tracked itself actually happened, as [start, end] in epoch
+ * ms. Its `date` is stamped when the run is *saved* — the end, not the start —
+ * so the window runs backwards from it by the run's own duration.
+ */
+export function trackedWindow(e) {
+  const end = new Date(e && e.date).getTime();
+  if (!e || isNaN(end)) return null;
+  const durMs = e.durMs > 0 ? e.durMs : parseFloat(e.min) > 0 ? parseFloat(e.min) * 60000 : 0;
+  return [end - durMs, end];
+}
+
+// Two recordings of the same outing: their windows overlap, give or take the
+// few minutes between pressing start on the watch and on the phone.
+const sameOuting = (a, b, slackMs = 5 * 60000) => a[0] < b[1] + slackMs && b[0] < a[1] + slackMs;
+
+/**
+ * What a watch recording can add to a run Stride tracked itself: heart rate,
+ * steps and cadence, and only where the Stride run has none of its own — a
+ * chest strap's reading is never replaced by a wrist's. Null when there is
+ * nothing to add.
+ */
+export function mergePatch(entry, w) {
+  const patch = {};
+  if (!(entry.hrAvg > 0) && w.hrAvg > 0) {
+    patch.hrAvg = Math.round(w.hrAvg);
+    if (w.hrMax > 0) patch.hrMax = Math.round(w.hrMax);
+    patch.hrSource = "watch";
+  }
+  if (!(entry.steps > 0) && w.steps > 0) {
+    patch.steps = Math.round(w.steps);
+    const minutes = entry.durMs > 0 ? entry.durMs / 60000 : (w.endTime - w.startTime) / 60000;
+    const cadence = cadenceOf(w.steps, minutes);
+    if (cadence && !(entry.cadence > 0)) patch.cadence = cadence;
+  }
+  if (!Object.keys(patch).length) return null;
+  patch.hcId = w.id;
+  return patch;
 }
 
 /**
@@ -166,15 +232,16 @@ export function planImport(workouts, { flat, log, startDate, minMinutes = 3, min
   const importedIds = new Set(
     Object.values(log || {}).map((e) => e && e.hcId).filter(Boolean)
   );
-  // Runs Stride tracked itself, by the minute they started — a workout that
-  // begins within a few minutes of one is the same outing seen twice.
-  const trackedStarts = Object.values(log || {})
-    .filter((e) => e && e.tracked && e.date)
-    .map((e) => new Date(e.date).getTime())
-    .filter((t) => !isNaN(t));
+  // Runs Stride tracked itself, as time windows. A watch workout that overlaps
+  // one is the same outing seen twice: its heart rate is merged into the
+  // Stride run rather than the run being logged a second time.
+  const tracked = Object.entries(log || {})
+    .filter(([, e]) => e && e.tracked && e.date)
+    .map(([key, e]) => ({ key, e, win: trackedWindow(e) }))
+    .filter((t) => t.win);
 
   const taken = new Set();
-  const ready = [], skipped = [];
+  const ready = [], skipped = [], merge = [];
 
   for (const w of workouts) {
     const label = exerciseName(w.exerciseType, w.title);
@@ -193,8 +260,11 @@ export function planImport(workouts, { flat, log, startDate, minMinutes = 3, min
     // training — and it would land on a plan day as a completed session.
     const km = (w.distanceM || 0) / 1000;
     if (km > 0 && km < minKm) { skipped.push({ w, label, when, reason: "too short" }); continue; }
-    if (trackedStarts.some((t) => Math.abs(t - w.startTime) < 15 * 60000)) {
-      skipped.push({ w, label, when, reason: "Stride already tracked this run" });
+    const twin = tracked.find((t) => sameOuting(t.win, [w.startTime, w.endTime]));
+    if (twin) {
+      const patch = mergePatch(twin.e, w);
+      if (patch) merge.push({ w, key: twin.key, label, when, kind, patch });
+      else skipped.push({ w, label, when, reason: "Stride already tracked this run" });
       continue;
     }
     const key = chooseDayKey(w, { flat, log, startDate, taken });
@@ -204,5 +274,33 @@ export function planImport(workouts, { flat, log, startDate, minMinutes = 3, min
     ready.push({ w, key, label, when, kind, entry: workoutToEntry(w) });
   }
 
-  return { ready, skipped };
+  return { ready, skipped, merge };
+}
+
+/**
+ * Runs Stride tracked that could still pick up a heart rate from the watch:
+ * recent, no heart rate of their own, not already looked up and given up on.
+ * Samsung Health can take a while to hand what the watch measured to Health
+ * Connect, so a run is retried on later launches until it is `giveUpMs` old.
+ */
+export function heartRateTargets(log, { now = Date.now(), maxAgeMs = 7 * DAY_MS } = {}) {
+  return Object.entries(log || {})
+    .filter(([, e]) => e && e.tracked && !(e.hrAvg > 0) && !e.hrChecked)
+    .map(([key, e]) => ({ key, e, win: trackedWindow(e) }))
+    .filter((t) => t.win && t.win[1] - t.win[0] >= 3 * 60000 && now - t.win[1] < maxAgeMs);
+}
+
+/**
+ * The patch a heart-rate lookup earns a tracked run. A handful of readings
+ * over half an hour is not an average worth printing, so it needs a few, and
+ * roughly one every two minutes. When there is nothing and the run is old
+ * enough that the watch must have synced, it is marked so it stops being asked.
+ */
+export function heartRatePatch(result, win, { now = Date.now(), giveUpMs = 36 * 3600000 } = {}) {
+  const minutes = (win[1] - win[0]) / 60000;
+  if (result && result.count >= Math.max(4, Math.floor(minutes / 2)) && result.avg > 0) {
+    return { hrAvg: Math.round(result.avg), ...(result.max > 0 ? { hrMax: Math.round(result.max) } : {}), hrSource: "watch" };
+  }
+  if (result && now - win[1] > giveUpMs) return { hrChecked: true };
+  return null;
 }

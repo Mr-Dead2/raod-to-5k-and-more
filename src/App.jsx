@@ -33,6 +33,7 @@ import {
 import {
   healthSupported, healthAvailability, healthPermissionGranted,
   requestHealthPermission, openHealthConnect, readWorkouts, planImport,
+  readHeartRate, heartRateTargets, heartRatePatch,
 } from "./health.js";
 import {
   isNative, nativeEnableReminder, nativeDisableReminder, nativeUpdateReminder,
@@ -139,7 +140,10 @@ export default function App() {
 
   // Health Connect import (runs recorded on a watch, via Samsung Health etc.)
   const [hc, setHc] = useState({ availability: "NotSupported", granted: false });
-  const [hcScan, setHcScan] = useState(null);   // { ready, skipped } after a look
+  const [hcScan, setHcScan] = useState(null);   // { ready, skipped, merge } after a look
+  // Watch workouts the user waved away on the Plan tab: they stay importable
+  // from Setup, but stop asking on every launch.
+  const [hcDismissed, setHcDismissed] = useState(() => new Set(loadSettings().hcDismissed || []));
   // Off by default: Samsung Health records walking on its own, so importing
   // walks means importing every trip to the shops as a training session.
   const [importWalks, setImportWalks] = useState(false);
@@ -226,11 +230,60 @@ export default function App() {
     setHc(next);
     return next;
   };
-  useEffect(() => { refreshHealth(); }, []);
+
+  // The watch, kept in step without anyone pressing a button. A Galaxy Watch 3
+  // can't run Stride and can't stream its pulse, but what it records reaches
+  // Health Connect through Samsung Health — so on every launch and every return
+  // to the app, Stride looks there for (a) runs recorded on the watch, offered
+  // on the Plan tab, and (b) the heart rate the watch measured during runs
+  // Stride tracked with the phone's GPS, which is added straight to those runs.
+  // These callbacks outlive the render that registered them, so they read the
+  // current log and settings through a ref, never through a stale closure.
+  const latest = useRef({});
+  latest.current = { log, startDate, importWalks };
+  const lastWatchSync = useRef(0);
+  const syncWatch = async ({ force = false } = {}) => {
+    if (!healthSupported()) return null;
+    const now = Date.now();
+    if (!force && now - lastWatchSync.current < 60000) return null;
+    lastWatchSync.current = now;
+    const state = await refreshHealth();
+    if (!state.granted) return null;
+
+    const workouts = await readWorkouts(30);
+    const cur = latest.current;
+    const scan = planImport(workouts, { flat: FLAT, log: cur.log, startDate: cur.startDate, includeWalks: cur.importWalks });
+    // New runs wait for a tap on the Plan tab. A watch recording of a run Stride
+    // tracked itself doesn't: it only fills what the Stride run is missing
+    // (heart rate, steps, cadence), so it is applied straight away.
+    setHcScan({ ...scan, merge: [] });
+
+    const patches = scan.merge.map((m) => [m.key, m.patch]);
+    const merged = new Set(patches.map(([key]) => key));
+    for (const t of heartRateTargets(latest.current.log).filter((x) => !merged.has(x.key)).slice(0, 12)) {
+      const r = await readHeartRate(t.win[0] - 60000, t.win[1] + 60000);
+      const patch = heartRatePatch(r, t.win);
+      if (patch) patches.push([t.key, patch]);
+    }
+    if (patches.length) {
+      // Merged onto the newest log, not the one this sync started from: the
+      // reads above take time, and the user may have logged something meanwhile.
+      setLog((prev) => {
+        const next = { ...prev };
+        for (const [key, patch] of patches) next[key] = { ...(prev[key] || {}), ...patch };
+        saveLog(next);
+        return next;
+      });
+      const n = patches.filter(([, p]) => p.hrAvg).length;
+      if (n) setToast({ icon: "❤️", title: `Heart rate from your watch added to ${n} run${n === 1 ? "" : "s"}`, label: "YOUR WATCH" });
+    }
+    return scan;
+  };
+  useEffect(() => { if (loaded) syncWatch({ force: true }); else refreshHealth(); }, [loaded]);
 
   useEffect(() => onAppResume(() => {
     permissionState().then(setPerm);
-    refreshHealth();
+    syncWatch();
   }), []);
 
   useEffect(() => {
@@ -327,6 +380,7 @@ export default function App() {
     setHcBusy(true);
     const granted = await requestHealthPermission();
     const next = await refreshHealth();
+    if (next.granted) await syncWatch({ force: true });
     setHcBusy(false);
     if (!granted && !next.granted) {
       setToast({ icon: "⚠️", title: "Health Connect didn't grant access", label: "IMPORT" });
@@ -337,26 +391,45 @@ export default function App() {
     haptic(8);
     setHcBusy(true);
     setHcScan(null);
-    const workouts = await readWorkouts(30);
-    setHcScan(planImport(workouts, { flat: FLAT, log, startDate, includeWalks: importWalks }));
+    await syncWatch({ force: true });
     setHcBusy(false);
   };
 
-  // Applies the whole batch in one write. update() persists per call and would
-  // otherwise merge each run onto a stale `log`, so only the last would survive.
-  const applyHealthImport = () => {
-    if (!hcScan || hcScan.ready.length === 0) return;
+  // Applies the whole batch in one write — new runs and the heart rate merged
+  // into runs Stride tracked. update() persists per call and would otherwise
+  // merge each onto a stale `log`, so only the last would survive.
+  const applyHealthImport = (scan = hcScan) => {
+    if (!scan) return;
+    const ready = scan.ready || [], merges = scan.merge || [];
+    if (!ready.length && !merges.length) return;
     const merged = { ...log };
-    for (const r of hcScan.ready) merged[r.key] = { ...(merged[r.key] || {}), ...r.entry };
+    for (const r of ready) merged[r.key] = { ...(merged[r.key] || {}), ...r.entry };
+    for (const m of merges) merged[m.key] = { ...(merged[m.key] || {}), ...m.patch };
     persist(merged);
     haptic([12, 30, 12]);
-    confetti({ count: 70 });
-    const n = hcScan.ready.length;
-    const walks = hcScan.ready.filter((r) => r.kind === "walk").length;
+    if (ready.length) confetti({ count: 70 });
+    const n = ready.length;
+    const walks = ready.filter((r) => r.kind === "walk").length;
     const noun = walks === 0 ? "run" : walks === n ? "walk" : "session";
-    setToast({ icon: "⌚", title: `Imported ${n} ${noun}${n === 1 ? "" : "s"}`, label: "HEALTH CONNECT" });
+    setToast({
+      icon: "⌚",
+      title: n
+        ? `Imported ${n} ${noun}${n === 1 ? "" : "s"}${merges.length ? ` · heart rate for ${merges.length} more` : ""}`
+        : `Heart rate added to ${merges.length} run${merges.length === 1 ? "" : "s"}`,
+      label: "YOUR WATCH",
+    });
     setHcScan(null);
     setTab("history");
+  };
+
+  // "Not now" on the Plan tab's watch card: remember these workouts so the card
+  // stops asking about them. They can still be imported from Setup.
+  const dismissWatchItems = (items) => {
+    haptic(6);
+    const next = new Set(hcDismissed);
+    for (const it of items) if (it.w && it.w.id) next.add(it.w.id);
+    setHcDismissed(next);
+    saveSettings({ ...loadSettings(), hcDismissed: [...next].slice(-200) });
   };
 
   // The notification centre is three levels down (Stats, then a collapsed
@@ -376,7 +449,7 @@ export default function App() {
     saveSettings({ ...loadSettings(), importWalks: next });
     haptic(6);
     // Re-sort what is already on screen rather than making them scan again.
-    setHcScan((prev) => prev && planImport(prev.ready.concat(prev.skipped).map((x) => x.w),
+    setHcScan((prev) => prev && planImport(prev.ready.concat(prev.skipped, prev.merge || []).map((x) => x.w),
       { flat: FLAT, log, startDate, includeWalks: next }));
   };
 
@@ -1220,7 +1293,16 @@ export default function App() {
 
               {/* Import runs recorded elsewhere (a watch, another app) */}
               {healthSupported() && (
-                <Group header="Import from your watch">
+                <Group header="Your watch"
+                  footer={<>
+                    <b style={{ color: C.text, fontWeight: 600 }}>With a Galaxy Watch 3</b> (or any watch whose app syncs to
+                    Health Connect): start runs on the watch from Samsung Health → Exercise → Running. In Samsung Health
+                    on the phone, open Settings → Health Connect and let it share exercise, heart rate, steps and
+                    distance. New runs then appear on the Plan tab by themselves. If you also track the run with
+                    Stride's GPS, the watch's heart rate is added to that run instead of logging it twice — and even
+                    without a watch workout, the heart rate your watch measured during a Stride run is added once it
+                    syncs (set the watch to measure heart rate continuously for the best result).
+                  </>}>
                   {hc.availability !== "Available" ? (
                     <div className="cell"><span className="cell-sub" style={{ fontSize: 15 }}>
                       {hc.availability === "NotInstalled"
@@ -1231,8 +1313,8 @@ export default function App() {
                     <div className="cell" style={{ flexDirection: "column", alignItems: "stretch", gap: 12 }}>
                       <span className="cell-sub" style={{ fontSize: 15 }}>
                         Runs your watch records reach the phone through its own app (Samsung Health, for
-                        example). Give Stride read access and they can be pulled into your history —
-                        Stride only ever reads, it never writes anything back.
+                        example). Give Stride read access and they can be pulled into your history, with the
+                        heart rate your watch measured — Stride only ever reads, it never writes anything back.
                       </span>
                       <button onClick={connectHealth} disabled={hcBusy} className="cta tap"
                         style={{ borderRadius: 999, padding: "13px 0", fontSize: 17, opacity: hcBusy ? 0.6 : 1 }}>
@@ -1243,13 +1325,13 @@ export default function App() {
                     <>
                       <div className="cell" style={{ flexDirection: "column", alignItems: "stretch", gap: 12 }}>
                         <span className="cell-sub" style={{ fontSize: 15 }}>
-                          Connected. Look for runs recorded in the last 30 days. Rides and gym sessions
-                          are never imported, walks only if you switch them on below, and anything Stride
-                          already tracked is left alone.
+                          Connected. Stride checks for new watch runs whenever you open it and offers them on
+                          the Plan tab. Rides and gym sessions are never imported, walks only if you switch
+                          them on below.
                         </span>
                         <button onClick={scanHealth} disabled={hcBusy} className="cta tap"
                           style={{ borderRadius: 999, padding: "13px 0", fontSize: 17, opacity: hcBusy ? 0.6 : 1 }}>
-                          {hcBusy ? "Looking…" : "Look for new runs"}
+                          {hcBusy ? "Looking…" : "Check now"}
                         </button>
                       </div>
 
@@ -1260,18 +1342,18 @@ export default function App() {
                         sub="Your watch records walks by itself, so this is off. Walks that do come in are logged as walks — never counted towards pace, longest run or race predictions."
                         trailing={<Switch on={importWalks} onClick={toggleImportWalks} label="Also import walks" />} />
 
-                      {hcScan && hcScan.ready.length === 0 && (
+                      {hcScan && hcScan.ready.length === 0 && !(hcScan.merge || []).length && (
                         <div className="cell rise"><span className="cell-sub" style={{ fontSize: 15 }}>
-                          Nothing new to import.
+                          Nothing new from your watch.
                           {hcScan.skipped.length > 0
                             ? ` ${hcScan.skipped.length} workout${hcScan.skipped.length === 1 ? " was" : "s were"} skipped — see below.`
-                            : " Health Connect has no workouts from the last 30 days; check that your watch's app is syncing into it."}
+                            : " Health Connect has no workouts from the last 30 days; check that Samsung Health is syncing into it."}
                         </span></div>
                       )}
 
-                      {hcScan && hcScan.ready.length > 0 && hcScan.ready.map((r) => (
-                        <Cell key={r.w.id} title={r.label}
-                          sub={`${r.kind === "walk" ? "Walk · " : ""}${r.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} → ${r.key}`}
+                      {hcScan && hcScan.ready.map((r) => (
+                        <Cell key={r.w.id} icon="watch" iconColor={C.good} title={r.label}
+                          sub={`${r.kind === "walk" ? "Walk · " : ""}${r.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}${r.entry.hrAvg ? ` · ♥ ${r.entry.hrAvg} bpm` : ""}`}
                           value={
                             <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                               <span className="num" style={{ color: C.text, fontWeight: 600 }}>{r.entry.km > 0 ? `${r.entry.km} km` : `${r.entry.min} min`}</span>
@@ -1279,15 +1361,25 @@ export default function App() {
                             </span>
                           } />
                       ))}
+
+                      {/* The same outing recorded twice — by Stride's GPS and by the
+                          watch — becomes one run with the watch's readings in it. */}
+                      {hcScan && (hcScan.merge || []).map((m) => (
+                        <Cell key={m.w.id} icon="heart" iconColor={C.warn} title="Heart rate for a run you tracked"
+                          sub={`${m.label} · ${m.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`}
+                          value={m.patch.hrAvg ? <span className="num" style={{ color: C.text, fontWeight: 600 }}>{m.patch.hrAvg} bpm</span> : <span className="t-foot">steps</span>} />
+                      ))}
+
                       {/* "5 runs" would be a lie when three of them are walks. */}
-                      {hcScan && hcScan.ready.length > 0 && (
+                      {hcScan && (hcScan.ready.length > 0 || (hcScan.merge || []).length > 0) && (
                         <div className="cell">
-                          <button onClick={applyHealthImport} className="cta tap" style={{ flex: 1, borderRadius: 999, padding: "13px 0", fontSize: 17 }}>
+                          <button onClick={() => applyHealthImport()} className="cta tap" style={{ flex: 1, borderRadius: 999, padding: "13px 0", fontSize: 17 }}>
                             {(() => {
-                              const n = hcScan.ready.length;
+                              const n = hcScan.ready.length, mm = (hcScan.merge || []).length;
                               const walks = hcScan.ready.filter((r) => r.kind === "walk").length;
                               const noun = walks === 0 ? "run" : walks === n ? "walk" : "session";
-                              return `Import ${n} ${noun}${n === 1 ? "" : "s"}`;
+                              if (!n) return `Add heart rate to ${mm} run${mm === 1 ? "" : "s"}`;
+                              return `Import ${n} ${noun}${n === 1 ? "" : "s"}${mm ? ` + heart rate for ${mm}` : ""}`;
                             })()}
                           </button>
                         </div>
@@ -1689,7 +1781,10 @@ export default function App() {
                             <Icon name="run" size={22} weight={2.1} />
                           </span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="t-headline" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.title}</div>
+                            {/* A watch run that landed on a rest day is a run, not "Rest". */}
+                            <div className="t-headline" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {h.e.imported && h.type === "rest" ? h.e.hcLabel || (walk ? "Walk" : "Run") : h.title}
+                            </div>
                             <div className="t-foot" style={{ color: C.dim, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                               <span>{date} · Week {h.week}</span>
                               {/* A walk is a session, but it is not a run, and the
@@ -1697,7 +1792,11 @@ export default function App() {
                                   watch logged on its own reads as training. */}
                               {walk && <span className="tag" style={{ color: C.easy, background: tint(C.easy, 0.16) }}>Walk</span>}
                               {h.e.tracked && <span className="tag" style={{ color: C.accent, background: tint(C.accent, 0.14) }}>GPS</span>}
-                              {h.e.imported && !h.e.tracked && <span className="tag" style={{ color: C.dim, background: "var(--fill3)" }}>Imported</span>}
+                              {h.e.imported && !h.e.tracked && (
+                                <span className="tag" style={{ color: C.good, background: tint(C.good, 0.14) }}>
+                                  {h.e.hcSource === "com.sec.android.app.shealth" ? "Samsung Health" : "Imported"}
+                                </span>
+                              )}
                             </div>
                           </div>
                           {h.e.feel ? <span style={{ fontSize: 24, flexShrink: 0 }} aria-label={`Felt ${h.e.feel} of 5`}>{FEELS[h.e.feel - 1]}</span> : null}
@@ -1710,6 +1809,12 @@ export default function App() {
                         )}
 
                         {metrics.length > 0 && <MetricGrid items={metrics} size={24} />}
+
+                        {h.e.hrSource === "watch" && (
+                          <div className="t-foot" style={{ color: C.dim, marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                            <Icon name="watch" size={14} /> Heart rate from your watch, via Health Connect
+                          </div>
+                        )}
 
                         {h.e.stitch && (
                           <div className="t-foot" style={{ color: C.warn, fontWeight: 600, marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1778,6 +1883,44 @@ export default function App() {
                 <Cell icon="bell" iconColor={C.warn} title="Notifications are off" sub="Reminders and run alerts can't reach you. Tap to fix." chevron onClick={goToNotifications} />
               </Group>
             )}
+
+            {/* What the watch recorded since last time, one tap from the plan. */}
+            {(() => {
+              if (!hcScan) return null;
+              const ready = hcScan.ready.filter((r) => !hcDismissed.has(r.w.id));
+              const merges = (hcScan.merge || []).filter((m) => !hcDismissed.has(m.w.id));
+              if (!ready.length && !merges.length) return null;
+              const n = ready.length;
+              const walks = ready.filter((r) => r.kind === "walk").length;
+              const noun = walks === 0 ? "run" : walks === n ? "walk" : "session";
+              const first = ready[0];
+              const title = n
+                ? `${n} new ${noun}${n === 1 ? "" : "s"} from your watch`
+                : `Heart rate from your watch for ${merges.length} run${merges.length === 1 ? "" : "s"}`;
+              const sub = n
+                ? `${first.label} · ${first.when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}${first.entry.km > 0 ? ` · ${first.entry.km} km` : ""}${n > 1 ? ` and ${n - 1} more` : ""}${merges.length ? ` · plus heart rate for ${merges.length} tracked run${merges.length === 1 ? "" : "s"}` : ""}`
+                : "Your watch recorded the runs you tracked with Stride — add its readings to them.";
+              return (
+                <Group style={{ marginBottom: 14 }}>
+                  <div className="cell rise" style={{ alignItems: "flex-start" }}>
+                    <IconBadge name="watch" color={C.good} />
+                    <span className="cell-main">
+                      <span className="cell-title" style={{ fontWeight: 600 }}>{title}</span>
+                      <span className="cell-sub">{sub}</span>
+                      <span style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button onClick={() => applyHealthImport({ ready, merge: merges })} className="cta tap"
+                          style={{ borderRadius: 999, padding: "8px 18px", fontSize: 15, minHeight: 0 }}>
+                          {n ? "Import" : "Add heart rate"}
+                        </button>
+                        <button onClick={() => dismissWatchItems([...ready, ...merges])} className="btn" style={{ padding: "8px 16px", fontSize: 15, minHeight: 0 }}>
+                          Not now
+                        </button>
+                      </span>
+                    </span>
+                  </div>
+                </Group>
+              );
+            })()}
 
             {/* Today / next-up hero — the screen's centre of gravity */}
             {hero ? (
