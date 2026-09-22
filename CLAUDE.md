@@ -454,6 +454,9 @@ front — the other headline reason to go native.
   a third-party broadcast app. On the Tizen watches (Watch 3 and earlier) those
   can no longer be obtained: Samsung ended Galaxy Store downloads for Tizen watch
   content in 2025. Do not restore UI copy telling people to go and install one.
+  What a Watch 3 owner gets instead is heart rate *after* the run, through Health
+  Connect (see "Importing runs from a watch" below) — the tracker's HR footer
+  says so.
 - **Route planning on the real road network (`src/routing.js` +
   `src/components/RouteMaker.jsx`).** `routing.js` downloads the runnable ways
   around a point from the **Overpass API** (free, no key; several mirrors are
@@ -489,9 +492,12 @@ front — the other headline reason to go native.
   sync`. It exists because no published Capacitor 6 plugin fits:
   `capacitor-health-connect` has no `ExerciseSession` record type at all, and
   `@capgo/capacitor-health` needs Capacitor 8. The bridge is **read-only and
-  deliberately tiny** — availability, permission, and "workouts between these two
-  instants, with each session's own aggregated totals". Health Connect's client
-  library is API 26+, which is why `minSdkVersion` is 26.
+  deliberately tiny** — availability, permission, "workouts between these two
+  instants, with each session's own aggregated totals", and `readHeartRate`:
+  the heart-rate samples in a window, summarised as `{ count, avg, max }` (raw
+  samples rather than `aggregate()`, so only readings inside the window count and
+  the count can gate whether an average is worth showing). Health Connect's
+  client library is API 26+, which is why `minSdkVersion` is 26.
   Every judgement lives in `src/health.js`, in pure functions. `EXERCISE_TYPES`
   tags each Health Connect type with a `kind` — `"run"` (running, treadmill),
   `"walk"` (walking, hiking) or `null` (never imported; a bike ride logged as
@@ -508,12 +514,36 @@ front — the other headline reason to go native.
   coach for the same reason. Then `workoutToEntry()` (metrics the watch did not
   record stay *absent* rather than becoming zero), `chooseDayKey()` (the
   calendar day the run happened when `startDate` is set, else the first
-  unfinished day), and `planImport()`, which returns `{ ready, skipped }` with a
-  reason on every skip — already imported (the Health Connect record id is kept
-  as `hcId` on the entry), a run Stride tracked itself (same outing within 15
-  minutes), too short, or no free day left. The batch is applied through one
-  `persist()` call, not a loop of `update()`s, which would each merge onto a
-  stale `log` and leave only the last run. History badges imported entries.
+  unfinished day), and `planImport()`, which returns `{ ready, skipped, merge }`
+  with a reason on every skip — already imported (the Health Connect record id is
+  kept as `hcId` on the entry), too short, or no free day left. **A watch
+  recording of a run Stride tracked itself is merged, not imported:** the two are
+  matched by overlapping time windows (`trackedWindow()` — a tracked entry's
+  `date` is stamped when the run is *saved*, i.e. its end, so the window runs
+  back from it by `durMs`; the old "starts within 15 minutes" check compared a
+  start with an end and missed every run longer than that, importing it twice),
+  and `mergePatch()` fills only what the Stride run lacks — heart rate (tagged
+  `hrSource: "watch"`), steps, cadence — never replacing a chest strap's reading.
+  Imported entries carry `cadence` from steps (`cadenceOf()`, plausible values
+  only) and `hcLabel` ("Running"), which History shows instead of the plan day's
+  title when a watch run landed on a rest day; it also tags Samsung Health
+  imports. The batch is applied through one `persist()` call, not a loop of
+  `update()`s, which would each merge onto a stale `log` and leave only the last
+  run.
+  **Sync is automatic.** `syncWatch()` in App runs on launch (once the log has
+  loaded) and on every return to the app (throttled to once a minute), reading
+  the current log and settings through a ref because the resume listener
+  outlives the render that registered it. It applies merges straight away, then
+  asks `readHeartRate` about recent tracked runs that still have no heart rate
+  (`heartRateTargets()`/`heartRatePatch()`: at least four readings and roughly one
+  every two minutes, else retried on later launches until the run is 36 h old,
+  when it is marked `hrChecked`) — this is how a Galaxy Watch 3, which cannot
+  stream a pulse, still gives a phone-tracked run its heart rate once Samsung
+  Health has synced. Patches go through a functional `setLog`, onto the newest
+  log. New watch runs are *offered*, not applied: a card on the Plan tab with
+  Import and "Not now" (dismissed workout ids persist as the `hcDismissed`
+  setting and stay importable from Setup → Your watch, whose footer carries the
+  Galaxy Watch setup steps).
 - **Share cards (`src/share.js` + `src/components/ShareSheet.jsx`).** Anything
   worth bragging about becomes an image. A card is described as a `spec`
   — `{ kind, data, format, style, options }` — and `renderCard(spec)` draws it on

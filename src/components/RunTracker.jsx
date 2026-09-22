@@ -433,7 +433,9 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
                   finds devices that are broadcasting, and a watch paired to this phone usually isn't — so it is listed from
                   your paired devices instead. Tap it and Stride will tell you straight whether it can send a pulse. Samsung
                   watches only can while an HR-broadcast app is running on the watch itself, and on the Tizen watches (Watch 3
-                  and older) those can no longer be installed.</>}>
+                  and older) those can no longer be installed. <b style={{ color: C.text, fontWeight: 600 }}>A Galaxy Watch 3 still works after the run:</b> wear
+                  it, and once it syncs Stride adds the heart rate it measured to this run through Health Connect
+                  (Stats → Setup → Your watch).</>}>
                 {hr.status === "connected" ? (
                   <Cell icon="heart" iconColor={C.warn} title={hr.deviceName} sub={hr.bpm ? `${hr.bpm} bpm · connected` : "Connected"}
                     trailing={<button onClick={() => { hr.disconnect(); haptic(6); }} className="link" style={{ minHeight: 0 }}>Disconnect</button>} />

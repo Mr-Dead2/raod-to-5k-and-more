@@ -210,4 +210,70 @@ class HealthConnectPlugin : Plugin() {
             }
         }
     }
+
+    /**
+     * Heart-rate readings between `startTime` and `endTime` (epoch ms, sent as
+     * strings for the reason given in readWorkouts), summarised as a count, an
+     * average and a maximum. This is how a run Stride tracked with the phone's
+     * GPS picks up the pulse a watch measured at the same time: a Galaxy Watch 3
+     * cannot stream its heart rate to an app, but Samsung Health relays what it
+     * recorded into Health Connect once the watch has synced.
+     *
+     * Raw samples rather than aggregate(): only samples inside the window are
+     * counted, and the count is what the JS side uses to decide whether there
+     * are enough readings for an average worth showing.
+     */
+    @PluginMethod
+    fun readHeartRate(call: PluginCall) {
+        val client = clientOrNull()
+        if (client == null) { call.reject("Health Connect is not available on this device."); return }
+        val startMs = call.getString("startTime")?.toLongOrNull()
+        val endMs = call.getString("endTime")?.toLongOrNull()
+        if (startMs == null || endMs == null) { call.reject("startTime and endTime are required."); return }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val start = Instant.ofEpochMilli(startMs)
+                val end = Instant.ofEpochMilli(endMs)
+                var sum = 0L
+                var count = 0
+                var max = 0L
+                val sources = mutableSetOf<String>()
+                var pageToken: String? = null
+                var pages = 0
+                do {
+                    val response = client.readRecords(
+                        ReadRecordsRequest(
+                            HeartRateRecord::class,
+                            timeRangeFilter = TimeRangeFilter.between(start, end),
+                            pageToken = pageToken,
+                        )
+                    )
+                    for (record in response.records) {
+                        var used = false
+                        for (sample in record.samples) {
+                            if (sample.time.isBefore(start) || sample.time.isAfter(end)) continue
+                            sum += sample.beatsPerMinute
+                            count++
+                            if (sample.beatsPerMinute > max) max = sample.beatsPerMinute
+                            used = true
+                        }
+                        if (used) sources.add(record.metadata.dataOrigin.packageName)
+                    }
+                    pageToken = response.pageToken
+                    pages++
+                } while (pageToken != null && pages < 20)
+
+                val out = JSObject().put("count", count)
+                if (count > 0) {
+                    out.put("avg", sum.toDouble() / count)
+                    out.put("max", max)
+                }
+                out.put("sources", JSArray(sources.toList()))
+                call.resolve(out)
+            } catch (e: Exception) {
+                call.reject(e.message ?: "Couldn't read heart rate from Health Connect.")
+            }
+        }
+    }
 }
