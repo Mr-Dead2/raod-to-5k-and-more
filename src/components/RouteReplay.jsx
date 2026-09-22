@@ -5,6 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { C } from "../data.js";
 import { haptic } from "../celebrate.js";
+import { Icon, GlassButton, Segmented, Metric } from "./ui.jsx";
 
 const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
@@ -36,7 +37,8 @@ export function RouteReplay({ run, onClose }) {
   const [playing, setPlaying] = useState(false);
 
   // Start with a default speed that finishes the route in ~40 s
-  const defaultSpeed = Math.max(10, Math.min(120, Math.round((durMs / 40000) / 10) * 10)) || 30;
+  const rawSpeed = Math.max(10, Math.min(120, Math.round((durMs / 40000) / 10) * 10)) || 30;
+  const defaultSpeed = SPEEDS.reduce((a, b) => (Math.abs(b - rawSpeed) < Math.abs(a - rawSpeed) ? b : a));
   const [speed, setSpeed] = useState(defaultSpeed);
 
   const elRef = useRef(null);
@@ -101,60 +103,71 @@ export function RouteReplay({ run, onClose }) {
     else setPlaying((p) => !p);
   };
 
-  const scrub = (e) => {
+  // The scrubber is direct manipulation: press anywhere on it and the playhead
+  // jumps under the finger, then follows it 1:1 — pointer capture keeps it
+  // tracking even when the finger wanders off the bar.
+  const [scrubbing, setScrubbing] = useState(false);
+  const seek = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     setIdx(Math.round(pct * (n - 1)));
-    setPlaying(false);
   };
+  const onScrubDown = (e) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    setScrubbing(true);
+    setPlaying(false);
+    seek(e);
+  };
+  const onScrubMove = (e) => { if (scrubbing) seek(e); };
+  const onScrubUp = () => setScrubbing(false);
+
+  // Keep Leaflet's attribution clear of the bottom panel.
+  const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  useEffect(() => {
+    const panel = panelRef.current, root = rootRef.current;
+    if (!panel || !root || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => root.style.setProperty("--panel-h", `${panel.offsetHeight}px`));
+    ro.observe(panel);
+    return () => ro.disconnect();
+  }, []);
 
   if (!route || n < 2) return null;
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 200, background: C.bg, display: "flex", flexDirection: "column", fontFamily: "'Manrope', system-ui, sans-serif" }}>
+    <div ref={rootRef} className="rp" role="dialog" aria-modal="true" aria-label="Route replay">
+      <div ref={elRef} className="rp-map" aria-label="Route replay map" />
 
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "max(14px, env(safe-area-inset-top)) 16px 10px", background: C.bg, borderBottom: `1px solid ${C.line}` }}>
-        <button onClick={onClose} className="chip" style={{ padding: "6px 14px", fontSize: 13 }}>← Back</button>
-        <div className="disp" style={{ fontSize: 16, fontWeight: 700 }}>Route Replay</div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
-          {SPEEDS.map((s) => (
-            <button key={s} onClick={() => { setSpeed(s); haptic(5); }} className="chip"
-              style={{ padding: "5px 9px", fontSize: 11, background: speed === s ? C.accent : "transparent", color: speed === s ? C.bg : C.dim, border: `1px solid ${speed === s ? C.accent : C.line}` }}>
-              {s}×
-            </button>
-          ))}
+      {/* Header, floating on glass */}
+      <div className="rm-head">
+        <GlassButton icon="back" label="Back" size={44} onClick={onClose} />
+        <div className="glass" style={{ borderRadius: 999, padding: 0, marginLeft: "auto", width: 220 }}>
+          <Segmented items={SPEEDS.map((sp) => ({ id: sp, label: `${sp}×` }))} value={speed} onChange={setSpeed} style={{ background: "transparent" }} />
         </div>
       </div>
 
-      {/* Map */}
-      <div ref={elRef} style={{ flex: 1, minHeight: 0 }} aria-label="Route replay map" />
-
-      {/* Stats strip */}
-      <div style={{ display: "flex", justifyContent: "space-around", padding: "11px 16px", background: C.surface, borderTop: `1px solid ${C.line}` }}>
-        {[
-          { label: "DISTANCE", value: `${distKm.toFixed(2)} km` },
-          { label: "ELAPSED", value: fmtTime(elapsedMs) },
-          { label: "RECENT PACE", value: (fmtPace(pace) || "--:--") + "/km" },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ textAlign: "center" }}>
-            <div className="num" style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
-            <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1.5, marginTop: 2 }}>{label}</div>
+      {/* Stats + transport, in one glass panel */}
+      <div ref={panelRef} className="glass rm-panel" style={{ padding: "14px 18px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+          <Metric label="Distance" value={distKm.toFixed(2)} unit="km" color={C.accent} size={24} />
+          <Metric label="Elapsed" value={fmtTime(elapsedMs)} color={C.yellow} size={24} />
+          <Metric label="Pace" value={fmtPace(pace) || "—"} unit={fmtPace(pace) ? "/km" : null} color={fmtPace(pace) ? C.cyan : C.dim2} size={24} align="right" />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <button onClick={togglePlay} aria-label={playing ? "Pause" : idx >= n - 1 ? "Replay from the start" : "Play"}
+            className="cta" style={{ width: 52, height: 52, minHeight: 52, borderRadius: "50%", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon name={playing ? "pause" : idx >= n - 1 ? "refresh" : "play"} size={idx >= n - 1 && !playing ? 22 : 20} weight={2.6} />
+          </button>
+          <div className={`scrub${scrubbing ? " dragging" : ""}`} role="slider" aria-label="Replay position"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}
+            onPointerDown={onScrubDown} onPointerMove={onScrubMove} onPointerUp={onScrubUp} onPointerCancel={onScrubUp}>
+            <div className="scrub-track"><i style={{ width: `${progress * 100}%` }} /></div>
+            <div className="scrub-thumb" style={{ left: `${progress * 100}%` }} />
           </div>
-        ))}
-      </div>
-
-      {/* Scrub bar + controls */}
-      <div style={{ padding: "12px 16px calc(14px + env(safe-area-inset-bottom))", background: C.surface, borderTop: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={togglePlay} className="chip cta disp"
-          style={{ padding: "10px 22px", fontSize: 18, fontWeight: 800, borderRadius: 999, flexShrink: 0, letterSpacing: 0 }}>
-          {playing ? "❚❚" : idx >= n - 1 ? "↺" : "▶"}
-        </button>
-        <div onClick={scrub} style={{ flex: 1, height: 6, background: C.surface2, borderRadius: 4, cursor: "pointer", position: "relative", touchAction: "none" }}>
-          <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${progress * 100}%`, background: C.accent, borderRadius: 4 }} />
-          <div style={{ position: "absolute", top: -5, left: `calc(${progress * 100}% - 8px)`, width: 16, height: 16, borderRadius: 8, background: C.accent, border: `2px solid ${C.bg}`, boxShadow: "0 1px 4px rgba(0,0,0,.5)" }} />
         </div>
-        <div className="num" style={{ fontSize: 11, color: C.dim, flexShrink: 0, minWidth: 80, textAlign: "right" }}>{fmtTime(elapsedMs)} / {fmtTime(durMs)}</div>
+        <div className="num t-foot" style={{ display: "flex", justifyContent: "space-between", color: C.dim, marginTop: 6, paddingLeft: 66 }}>
+          <span>{fmtTime(elapsedMs)}</span><span>{fmtTime(durMs)}</span>
+        </div>
       </div>
     </div>
   );

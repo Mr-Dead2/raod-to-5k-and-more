@@ -34,18 +34,18 @@ const DOT = { good: C.good, warn: C.warn, bad: C.warn, info: C.dim };
 
 function Row({ state, label, value, note }) {
   return (
-    <div style={{ display: "flex", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.line}` }}>
+    <div className="sep" style={{ display: "flex", gap: 12, padding: "11px 0", "--inset": "0px" }}>
       <span style={{
-        width: 8, height: 8, borderRadius: "50%", marginTop: 6, flexShrink: 0,
+        width: 9, height: 9, borderRadius: "50%", marginTop: 6, flexShrink: 0,
         background: DOT[state] || C.dim,
-        boxShadow: state === "bad" ? `0 0 8px ${tint(C.warn, .8)}` : "none",
+        boxShadow: state === "bad" ? `0 0 0 3px ${tint(C.warn, .22)}` : "none",
       }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-          <span style={{ fontSize: 12, color: C.dim, fontWeight: 600 }}>{label}</span>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: C.text, fontWeight: 700, textAlign: "right", wordBreak: "break-word" }}>{value}</span>
+        <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+          <span className="t-sub" style={{ color: C.text }}>{label}</span>
+          <span className="t-sub" style={{ marginLeft: "auto", color: C.dim, textAlign: "right", wordBreak: "break-word" }}>{value}</span>
         </div>
-        {note && <div style={{ fontSize: 11, color: C.dim2, marginTop: 3, lineHeight: 1.45 }}>{note}</div>}
+        {note && <div className="t-foot" style={{ color: C.dim, marginTop: 3 }}>{note}</div>}
       </div>
     </div>
   );
@@ -53,8 +53,7 @@ function Row({ state, label, value, note }) {
 
 function FixButton({ onClick, children }) {
   return (
-    <button onClick={onClick} className="tap chip"
-      style={{ width: "100%", marginTop: 8, borderRadius: 12, padding: "10px 0", fontSize: 12.5, fontWeight: 700, background: C.surface2, color: C.text, cursor: "pointer" }}>
+    <button onClick={onClick} className="btn" style={{ width: "100%", marginTop: 8, padding: "12px 0" }}>
       {children}
     </button>
   );
@@ -159,9 +158,9 @@ export function NotifDiagnostics() {
   const alertsChannel = r?.channels?.find((c) => c.id === "stride-alerts");
 
   return (
-    <div style={{ marginTop: 6 }}>
-      <div className="lab" style={{ marginBottom: 2 }}>Troubleshooting</div>
-      <div style={{ fontSize: 11, color: C.dim2, marginBottom: 4, lineHeight: 1.5 }}>
+    <div>
+      <div className="t-headline">Troubleshooting</div>
+      <div className="t-foot" style={{ color: C.dim, margin: "2px 0 8px" }}>
         If notifications aren't arriving, this says where they're getting stuck.
       </div>
 
@@ -260,16 +259,15 @@ export function NotifDiagnostics() {
       )}
 
       <button onClick={runTest} disabled={testing} className="tap cta"
-        style={{ width: "100%", marginTop: 12, borderRadius: 12, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", opacity: testing ? 0.6 : 1 }}>
-        {testing ? "Testing…" : "Test notifications now"}
+        style={{ width: "100%", marginTop: 14, borderRadius: 999, padding: "13px 0", fontSize: 17, opacity: testing ? 0.6 : 1 }}>
+        {testing ? "Testing…" : "Send a test notification"}
       </button>
 
       {testResult && (
-        <div className="rise" style={{
-          marginTop: 10, borderRadius: 12, padding: "11px 13px", fontSize: 12, lineHeight: 1.5,
+        <div className="rise t-foot" style={{
+          marginTop: 10, borderRadius: 16, padding: "11px 14px",
           color: C.text,
-          background: tint(testResult.ok ? C.good : C.warn, .12),
-          border: `1px solid ${tint(testResult.ok ? C.good : C.warn, .45)}`,
+          background: tint(testResult.ok ? C.good : C.warn, .14),
         }}>
           {testResult.msg}
         </div>

@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { C, tint } from "../data.js";
 import { haptic } from "../celebrate.js";
+import { createSpring, project, rubberband, velocityTracker } from "../spring.js";
+import { Icon, Segmented } from "./ui.jsx";
 import {
   FORMATS, STYLES, formatById, renderCard, canvasBlob, cardText,
   shareBlob, downloadBlob, copyBlob, copyText, cardFileName,
@@ -11,20 +13,16 @@ import {
 //
 // The preview is the real card — the same renderCard() output that gets shared
 // — so what you approve is exactly what lands in the feed. Re-renders are
-// generation-guarded: a fast tap through the format chips would otherwise let
-// a slow earlier render overwrite a newer one.
+// generation-guarded: a fast tap through the formats would otherwise let a
+// slow earlier render overwrite a newer one.
+//
+// It is presented as an iOS sheet. It rises on a critically damped spring and
+// leaves the way it came (down), whichever way it is dismissed. The grabber
+// and header are a handle: the sheet tracks the finger 1:1, resists being
+// pulled above its resting place, and on release the flick is projected
+// forward — thrown far enough, it dismisses carrying the finger's speed;
+// otherwise it springs home. Grab it again mid-flight and it simply follows.
 // ---------------------------------------------------------------------------
-
-const Ico = ({ d, size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
-    {d}
-  </svg>
-);
-const IconShare = <><circle cx="6" cy="12" r="3" /><circle cx="18" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4" /></>;
-const IconSave = <><path d="M12 3v12" /><path d="m6 11 6 6 6-6" /><path d="M4 21h16" /></>;
-const IconCopy = <><rect x="9" y="9" width="12" height="12" rx="2.5" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>;
-const IconText = <><path d="M4 6h16M4 12h16M4 18h10" /></>;
 
 // Which styles make sense for each card kind.
 const STYLE_FOR = {
@@ -33,6 +31,27 @@ const STYLE_FOR = {
   achievement: ["bold"],
   goal: ["bold"],
 };
+
+// Content toggles look like switches' little cousins — "what's on the card" is
+// a different question from "which card", which the segmented controls ask.
+const Toggle = ({ on, set, children }) => (
+  <button onClick={() => { set(!on); haptic(5); }} aria-pressed={on} className="chip"
+    style={{
+      display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, padding: "7px 13px",
+      background: on ? tint(C.accent, 0.16) : "var(--fill3)", color: on ? C.accent : C.dim,
+    }}>
+    <span style={{ display: "flex", width: 14, justifyContent: "center" }}>{on ? <Icon name="check" size={14} weight={2.8} /> : <Icon name="plus" size={13} weight={2.4} />}</span>
+    {children}
+  </button>
+);
+
+// The iOS share sheet's row of round actions.
+const Action = ({ icon, label, onClick, disabled }) => (
+  <button onClick={onClick} disabled={disabled} className="sheet-action">
+    <span><Icon name={icon} size={22} weight={1.9} /></span>
+    {label}
+  </button>
+);
 
 export function ShareSheet({ spec, onClose, onToast }) {
   const kind = spec.kind || "run";
@@ -60,6 +79,69 @@ export function ShareSheet({ spec, onClose, onToast }) {
   const styles = STYLES.filter((s) => (STYLE_FOR[kind] || ["bold"]).includes(s.id));
   const canRoute = kind === "run" && hasRoute;
 
+  // --- presentation physics -------------------------------------------------
+  const sheetRef = useRef(null);
+  const scrimRef = useRef(null);
+  const closing = useRef(false);
+  const drag = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const height = () => sheetRef.current?.offsetHeight || window.innerHeight;
+
+  const spring = useRef(null);
+  if (!spring.current) {
+    spring.current = createSpring({
+      damping: 1, response: 0.42,
+      onUpdate: (y) => {
+        if (sheetRef.current) sheetRef.current.style.transform = `translate3d(0,${y}px,0)`;
+        // The scrim dims in step with the sheet: continuous feedback, not a fade at the end.
+        if (scrimRef.current) scrimRef.current.style.opacity = String(Math.max(0, Math.min(1, 1 - y / height())));
+      },
+      onRest: (y) => { if (closing.current && y > 0) onCloseRef.current(); },
+    });
+  }
+
+  useLayoutEffect(() => {
+    spring.current.set(height());
+    spring.current.to(0);
+    const s = spring.current;
+    return () => s.stop();
+  }, []);
+
+  const dismiss = useCallback((velocity = 0) => {
+    if (closing.current) return;
+    closing.current = true;
+    spring.current.to(height(), { velocity: Math.max(0, velocity), damping: 1, response: 0.34 });
+  }, []);
+
+  const onHandleDown = (e) => {
+    if (e.button != null && e.button !== 0) return;
+    if (e.target.closest("button")) return;       // the close button is not a handle
+    closing.current = false;                       // grabbing it mid-dismiss takes it back
+    spring.current.stop();
+    drag.current = { id: e.pointerId, y0: e.clientY, from: spring.current.value, vt: velocityTracker() };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  const onHandleMove = (e) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    let y = d.from + (e.clientY - d.y0);
+    if (y < 0) y = -rubberband(-y, height());       // it can't go higher than home
+    d.vt.add(y);
+    spring.current.set(y);
+  };
+  const onHandleUp = (e) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    drag.current = null;
+    const v = d.vt.velocity();
+    const y = spring.current.value;
+    // Decide from where the flick is going, not where the finger let go.
+    if (y + project(v) > height() * 0.45) { haptic(6); dismiss(v); }
+    else spring.current.to(0, { velocity: v, damping: Math.abs(v) > 300 ? 0.8 : 1, response: 0.36 });
+  };
+
+  // --- card rendering ---------------------------------------------------------
   const currentSpec = useCallback(() => ({
     kind,
     data,
@@ -108,10 +190,10 @@ export function ShareSheet({ spec, onClose, onToast }) {
   }, []);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") dismiss(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [dismiss]);
 
   const flash = (msg) => {
     setNote(msg);
@@ -127,7 +209,7 @@ export function ShareSheet({ spec, onClose, onToast }) {
 
   const doShare = () => withBlob(async (blob) => {
     const res = await shareBlob(blob, cardFileName(currentSpec()), cardText(currentSpec()));
-    if (res === "shared") { onToast?.({ icon: "📤", title: "Card shared", label: "SHARE" }); onClose(); }
+    if (res === "shared") { onToast?.({ icon: "📤", title: "Card shared", label: "SHARE" }); dismiss(); }
     else if (res === "saved") flash("No share sheet here — image saved instead");
     else if (res === "error") flash("Couldn't open the share sheet");
   });
@@ -149,134 +231,83 @@ export function ShareSheet({ spec, onClose, onToast }) {
   };
 
   const fmt = formatById(format);
-  const previewMaxH = fmt.id === "story" ? 380 : fmt.id === "wide" ? 200 : 300;
-
-  // Content toggles get an outlined on-state rather than the filled gradient
-  // the format/style choices use — "which card" and "what's on it" are two
-  // different questions and shouldn't look like the same control.
-  const Toggle = ({ on, set, children }) => (
-    <button onClick={() => { set(!on); haptic(5); }} className="chip tap"
-      style={{
-        fontSize: 11.5, padding: "7px 13px",
-        display: "inline-flex", alignItems: "center", gap: 6,
-        background: on ? tint(C.accent, .12) : C.bgSoft,
-        color: on ? C.accent : C.dim2,
-        borderColor: on ? tint(C.accent, .4) : C.line,
-        fontWeight: on ? 800 : 600,
-      }}>
-      <span style={{
-        width: 6, height: 6, borderRadius: 6, flexShrink: 0,
-        background: on ? C.accent : C.line2,
-      }} />
-      {children}
-    </button>
-  );
-
-  const Action = ({ icon, label: lbl, onClick, primary }) => (
-    <button onClick={onClick} disabled={busy || !!err}
-      className={primary ? "tap cta disp" : "card tap"}
-      style={{
-        flex: primary ? 1.6 : 1, display: "flex", flexDirection: primary ? "row" : "column",
-        alignItems: "center", justifyContent: "center", gap: primary ? 9 : 5,
-        borderRadius: 15, padding: primary ? "15px 0" : "12px 0",
-        fontSize: primary ? 15.5 : 11, fontWeight: primary ? 800 : 700,
-        color: primary ? undefined : C.text, cursor: "pointer",
-        opacity: busy || err ? 0.5 : 1,
-      }}>
-      <Ico d={icon} size={primary ? 17 : 16} />{lbl}
-    </button>
-  );
+  const previewMaxH = fmt.id === "story" ? 380 : fmt.id === "wide" ? 196 : 300;
+  const off = busy || !!err;
 
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 400,
-      background: "rgba(4,5,8,.72)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-      display: "flex", alignItems: "flex-end", justifyContent: "center",
-      animation: "rise .22s ease both",
-    }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        width: "100%", maxWidth: 560, maxHeight: "94vh", overflowY: "auto",
-        background: `linear-gradient(178deg, ${tint(C.accent, .07)} 0%, ${C.surface} 18%, ${C.bg} 100%)`,
-        border: `1px solid ${C.line}`, borderBottom: "none",
-        borderRadius: "26px 26px 0 0",
-        boxShadow: "0 -24px 60px -20px rgba(0,0,0,.9)",
-        padding: `14px 16px calc(18px + env(safe-area-inset-bottom))`,
-        animation: "slideUp .28s cubic-bezier(.2,.9,.3,1) both",
-      }}>
-        <div style={{ width: 40, height: 4, borderRadius: 4, background: C.line2, margin: "0 auto 14px" }} />
+    <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div ref={scrimRef} onClick={() => dismiss()} aria-hidden="true"
+        style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.55)", opacity: 0, touchAction: "none" }} />
 
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
-          <div>
-            <div className="disp" style={{ fontSize: 19, fontWeight: 700 }}>Share your card</div>
-            <div style={{ fontSize: 11.5, color: C.dim, marginTop: 2 }}>{fmt.hint} · {fmt.w * 2}×{fmt.h * 2}</div>
-          </div>
-          <button onClick={onClose} className="chip tap" style={{ marginLeft: "auto", padding: "7px 13px" }}>Close</button>
-        </div>
-
-        {/* the actual image that will be shared */}
-        <div style={{
-          borderRadius: 20, padding: 14, marginBottom: 14,
-          background: `radial-gradient(120% 90% at 50% 0%, ${tint(C.accent, .1)}, transparent 70%), ${C.bgSoft}`,
-          border: `1px solid ${C.line}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          minHeight: previewMaxH * 0.6,
-        }}>
-          {err ? (
-            <div style={{ fontSize: 12.5, color: C.warn, textAlign: "center", lineHeight: 1.6, padding: 20 }}>{err}</div>
-          ) : url ? (
-            <img src={url} alt="Share card preview"
-              style={{
-                maxHeight: previewMaxH, maxWidth: "100%", borderRadius: 14, display: "block",
-                boxShadow: `0 22px 44px -22px rgba(0,0,0,.95), 0 0 0 1px ${C.line}`,
-                opacity: busy ? 0.55 : 1, transition: "opacity .2s ease",
-              }} />
-          ) : (
-            <div style={{ fontSize: 12, color: C.dim, padding: 30 }}>Drawing your card…</div>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          {FORMATS.map((f) => (
-            <button key={f.id} onClick={() => { setFormat(f.id); haptic(5); }}
-              className={`chip tap${format === f.id ? " on" : ""}`} style={{ flex: 1, textAlign: "center" }}>
-              {f.name}
+      <div ref={sheetRef} role="dialog" aria-modal="true" aria-label="Share card" className="sheet"
+        style={{ transform: "translate3d(0,100%,0)" }}>
+        {/* The handle: grabber and header. */}
+        <div className="sheet-handle" onPointerDown={onHandleDown} onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp} onPointerCancel={onHandleUp}>
+          <div className="grabber" aria-hidden="true" />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0 14px" }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="t-headline">Share card</div>
+              <div className="t-foot" style={{ color: C.dim }}>{fmt.hint} · {fmt.w * 2}×{fmt.h * 2}</div>
+            </div>
+            <button onClick={() => dismiss()} aria-label="Close" className="close-btn" style={{ marginLeft: "auto" }}>
+              <Icon name="xmark" size={15} weight={2.6} />
             </button>
-          ))}
+          </div>
         </div>
 
-        {styles.length > 1 && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {styles.map((s) => {
-              const off = s.id === "route" && !canRoute;
-              return (
-                <button key={s.id} onClick={() => { if (!off) { setStyle(s.id); haptic(5); } }} disabled={off}
-                  className={`chip tap${style === s.id && !off ? " on" : ""}`}
-                  style={{ flex: 1, textAlign: "center", opacity: off ? 0.35 : 1 }}>
-                  {s.name}
-                </button>
-              );
-            })}
+        <div className="sheet-body">
+          {/* the actual image that will be shared */}
+          <div style={{
+            borderRadius: 24, padding: 16, marginBottom: 16,
+            background: `radial-gradient(120% 90% at 50% 0%, ${tint(C.accent, 0.1)}, transparent 70%), var(--fill4)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            minHeight: previewMaxH * 0.6,
+          }}>
+            {err ? (
+              <div className="t-sub" style={{ color: C.warn, textAlign: "center", padding: 20 }}>{err}</div>
+            ) : url ? (
+              <img src={url} alt="Share card preview"
+                style={{
+                  maxHeight: previewMaxH, maxWidth: "100%", borderRadius: 14, display: "block",
+                  boxShadow: "0 24px 48px -22px rgba(0,0,0,.95), 0 0 0 .5px rgba(255,255,255,.12)",
+                  opacity: busy ? 0.55 : 1, transition: "opacity .2s ease",
+                }} />
+            ) : (
+              <div className="t-sub" style={{ color: C.dim, padding: 30 }}>Drawing your card…</div>
+            )}
           </div>
-        )}
 
-        {kind === "run" && (hasRoute || hasSplits) && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-            {hasRoute && <Toggle on={showRoute} set={setShowRoute}>Route</Toggle>}
-            {hasSplits && <Toggle on={showSplits} set={setShowSplits}>Splits</Toggle>}
-            <Toggle on={showExtras} set={setShowExtras}>Extras</Toggle>
-            <Toggle on={showDate} set={setShowDate}>Date</Toggle>
+          <Segmented items={FORMATS.map((f) => ({ id: f.id, label: f.name }))} value={format} onChange={setFormat} style={{ marginBottom: 10 }} />
+
+          {styles.length > 1 && (
+            <Segmented items={styles.filter((s) => s.id !== "route" || canRoute).map((s) => ({ id: s.id, label: s.name }))}
+              value={style} onChange={setStyle} style={{ marginBottom: 12 }} />
+          )}
+
+          {kind === "run" && (hasRoute || hasSplits) && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
+              {hasRoute && <Toggle on={showRoute} set={setShowRoute}>Route</Toggle>}
+              {hasSplits && <Toggle on={showSplits} set={setShowSplits}>Splits</Toggle>}
+              <Toggle on={showExtras} set={setShowExtras}>Extras</Toggle>
+              <Toggle on={showDate} set={setShowDate}>Date</Toggle>
+            </div>
+          )}
+
+          <button onClick={doShare} disabled={off} className="cta tap"
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 999, padding: "15px 0", fontSize: 17, opacity: off ? 0.5 : 1 }}>
+            <Icon name="share" size={19} /> Share
+          </button>
+
+          <div style={{ display: "flex", justifyContent: "space-around", margin: "16px 0 6px" }}>
+            <Action icon="download" label="Save" onClick={doSave} disabled={off} />
+            <Action icon="copy" label="Copy image" onClick={doCopyImage} disabled={off} />
+            <Action icon="text" label="Copy text" onClick={doCopyText} disabled={off} />
           </div>
-        )}
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <Action icon={IconShare} label="Share" onClick={doShare} primary />
-          <Action icon={IconSave} label="Save" onClick={doSave} />
-          <Action icon={IconCopy} label="Copy" onClick={doCopyImage} />
-          <Action icon={IconText} label="Text" onClick={doCopyText} />
-        </div>
-
-        <div style={{ minHeight: 18, fontSize: 11.5, color: note ? C.accent : C.dim2, textAlign: "center", fontWeight: 600, lineHeight: 1.5 }}>
-          {note || "Share opens your phone's share sheet — Instagram, WhatsApp, anywhere."}
+          <div className="t-foot" style={{ minHeight: 18, color: note ? C.accent : C.dim, textAlign: "center", fontWeight: note ? 600 : 400 }}>
+            {note || "Share opens your phone's share sheet — Instagram, WhatsApp, anywhere."}
+          </div>
         </div>
       </div>
     </div>

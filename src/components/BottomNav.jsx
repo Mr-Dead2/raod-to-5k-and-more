@@ -1,22 +1,43 @@
 import React from "react";
-import { C, tint } from "../data.js";
+import { C } from "../data.js";
+import { useSlidingPill } from "./useSlidingPill.js";
 
-// Inline SVG icons so we don't pull in an icon library. Each has a `fill`
-// companion path used only while the tab is active — a filled icon is how a
-// native tab bar says "you are here" before you have read the label.
+// SF Symbols–style glyphs, drawn on a 24-unit grid. Each tab has an outline
+// form and a filled form: a native tab bar says "you are here" with the fill
+// before you have read a word.
 const ICONS = {
-  plan: (
-    <><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></>
-  ),
-  stats: (
-    <><path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /><rect x="17" y="5" width="3" height="13" /></>
-  ),
-  coach: (
-    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z" />
-  ),
-  history: (
-    <><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-9 9" /><path d="M3 12H1m2 0a9 9 0 0 1 .5-3" /><path d="M12 7v5l3 2" /></>
-  ),
+  plan: {
+    line: (
+      <><rect x="3.5" y="4.5" width="17" height="16" rx="3.6" /><path d="M3.5 9.4h17M8 2.8v3.4M16 2.8v3.4" /><path d="m9.2 14.6 2 2 3.8-3.9" /></>
+    ),
+    fill: (
+      <><path d="M7.1 4.5h9.8a3.6 3.6 0 0 1 3.6 3.6v1.3h-17V8.1a3.6 3.6 0 0 1 3.6-3.6Z" fill="currentColor" /><path d="M3.5 10.4h17v6.5a3.6 3.6 0 0 1-3.6 3.6H7.1a3.6 3.6 0 0 1-3.6-3.6Z" fill="currentColor" /><path d="M8 2.8v3.4M16 2.8v3.4" /><path d="m9.2 14.9 2 2 3.8-3.9" stroke={C.onAccent} /></>
+    ),
+  },
+  stats: {
+    line: (
+      <><rect x="3.6" y="12.2" width="4.4" height="8.3" rx="1.5" /><rect x="9.8" y="7.4" width="4.4" height="13.1" rx="1.5" /><rect x="16" y="3.5" width="4.4" height="17" rx="1.5" /></>
+    ),
+    fill: (
+      <g fill="currentColor"><rect x="3.6" y="12.2" width="4.4" height="8.3" rx="1.5" /><rect x="9.8" y="7.4" width="4.4" height="13.1" rx="1.5" /><rect x="16" y="3.5" width="4.4" height="17" rx="1.5" /></g>
+    ),
+  },
+  coach: {
+    line: (
+      <><path d="M12 3.6c4.9 0 8.6 3.2 8.6 7.4s-3.7 7.4-8.6 7.4c-.9 0-1.8-.1-2.6-.3L5.3 20.3l.9-3.6C4.4 15.3 3.4 13.3 3.4 11 3.4 6.8 7.1 3.6 12 3.6Z" /><path d="M8.4 11h.01M12 11h.01M15.6 11h.01" strokeWidth="2.6" /></>
+    ),
+    fill: (
+      <><path d="M12 3.6c4.9 0 8.6 3.2 8.6 7.4s-3.7 7.4-8.6 7.4c-.9 0-1.8-.1-2.6-.3L5.3 20.3l.9-3.6C4.4 15.3 3.4 13.3 3.4 11 3.4 6.8 7.1 3.6 12 3.6Z" fill="currentColor" /><path d="M8.4 11h.01M12 11h.01M15.6 11h.01" stroke={C.onAccent} strokeWidth="2.6" /></>
+    ),
+  },
+  history: {
+    line: (
+      <><path d="M4.2 12.8A8 8 0 1 0 6.4 6.2" /><path d="M3.6 4.4v3.7h3.7" /><path d="M12 8v4.4l2.9 1.8" /></>
+    ),
+    fill: (
+      <><circle cx="12.3" cy="12.2" r="8.1" fill="currentColor" stroke="none" /><path d="M3.4 9.6 3.6 4.4" /><path d="M12.3 7.9v4.5l2.9 1.8" stroke={C.onAccent} /></>
+    ),
+  },
 };
 
 const ITEMS = [
@@ -26,62 +47,35 @@ const ITEMS = [
   { id: "history", label: "History" },
 ];
 
-// A floating dock rather than a full-width bar: it reads as a control that
-// sits above the page instead of a slab welded to the bottom of the screen.
-// The accent pill slides between tabs, so the active state is a movement.
+// A floating Liquid Glass tab bar: a capsule of blurred, saturated glass with
+// a bright rim, riding above the page. The selected tab sits in a lens of
+// lighter glass that slides between tabs on a spring — and can be dragged
+// along the bar, the way the iOS tab bar can.
 export function BottomNav({ tab, onChange }) {
   const index = Math.max(0, ITEMS.findIndex((i) => i.id === tab));
+  const pill = useSlidingPill({
+    count: ITEMS.length,
+    index,
+    onSelect: (i) => onChange(ITEMS[i].id),
+  });
+
   return (
-    <nav style={{
-      position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
-      padding: "0 14px calc(12px + env(safe-area-inset-bottom))",
-      pointerEvents: "none",
-    }}>
-      {/* a short fade under the dock so content scrolls out of sight rather
-          than being sliced off by the dock's own edge */}
-      <div aria-hidden="true" style={{
-        position: "absolute", left: 0, right: 0, bottom: 0, height: 116, zIndex: -1,
-        background: `linear-gradient(to top, ${C.bg} 32%, ${tint(C.bg, 0)})`,
-      }} />
-      <div style={{
-        pointerEvents: "auto",
-        maxWidth: 420, margin: "0 auto", position: "relative",
-        display: "flex", padding: 6, borderRadius: 23,
-        background: "rgba(11,13,17,.86)",
-        backdropFilter: "blur(22px) saturate(160%)",
-        WebkitBackdropFilter: "blur(22px) saturate(160%)",
-        border: `1px solid ${C.line}`,
-        boxShadow: `0 20px 44px -20px rgba(0,0,0,.98), inset 0 1px 0 ${tint(C.text, 0.06)}`,
-      }}>
-        {/* sliding highlight behind the active tab */}
-        <span aria-hidden="true" style={{
-          position: "absolute", top: 6, bottom: 6, left: 6,
-          width: `calc((100% - 12px) / ${ITEMS.length})`,
-          transform: `translateX(${index * 100}%)`,
-          borderRadius: 17,
-          background: `linear-gradient(150deg,${tint(C.accent, .22)},${tint(C.accent2, .1)})`,
-          border: `1px solid ${tint(C.accent, .4)}`,
-          boxShadow: `0 6px 18px -10px ${C.accent}`,
-          transition: "transform .32s cubic-bezier(.3,1.3,.5,1)",
-        }} />
+    <nav className="tabbar" aria-label="Sections">
+      <div className="tabbar-edge" aria-hidden="true" />
+      <div ref={pill.trackRef} className="glass tabbar-track" {...pill.trackProps}>
+        <span ref={pill.pillRef} className="tabbar-lens" aria-hidden="true"
+          style={{ width: `calc((100% - 8px) / ${ITEMS.length})` }} />
         {ITEMS.map((it) => {
           const active = tab === it.id;
-          const color = active ? C.accent : C.dim;
           return (
-            <button key={it.id} onClick={() => onChange(it.id)} aria-current={active ? "page" : undefined}
-              style={{
-                position: "relative", zIndex: 1,
-                flex: 1, background: "none", border: "none", cursor: "pointer",
-                padding: "10px 0 9px", display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 5, color,
-                transition: "color .2s ease",
-              }}>
-              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke={color}
-                strokeWidth={active ? 2.3 : 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-                style={{ transition: "stroke-width .2s ease", filter: active ? `drop-shadow(0 0 6px ${tint(C.accent, .55)})` : "none" }}>
-                {ICONS[it.id]}
+            <button key={it.id} onClick={() => { if (!active) onChange(it.id); }}
+              aria-current={active ? "page" : undefined} className="tabbar-item"
+              style={{ color: active ? C.accent : "rgba(235,235,245,.78)" }}>
+              <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {active ? ICONS[it.id].fill : ICONS[it.id].line}
               </svg>
-              <span style={{ fontSize: 9.5, fontWeight: active ? 800 : 600, letterSpacing: 0.3 }}>{it.label}</span>
+              <span>{it.label}</span>
             </button>
           );
         })}

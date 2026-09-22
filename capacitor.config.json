@@ -2,8 +2,8 @@
   "appId": "com.road5k.tracker",
   "appName": "Stride",
   "webDir": "dist",
-  "backgroundColor": "#0c0d10",
-  "android": { "backgroundColor": "#0c0d10" },
+  "backgroundColor": "#000000",
+  "android": { "backgroundColor": "#000000" },
   "plugins": {
     "LocalNotifications": {
       "smallIcon": "ic_stat_stride",

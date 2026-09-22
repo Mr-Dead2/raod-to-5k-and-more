@@ -40,7 +40,7 @@ function toSegments(pts) {
 
 // `points` accepts [{lat,lng,phase?}] (live) or [[lat,lng,phase_char?]] (stored routes).
 // `ghost` is an optional planned route drawn underneath as a dashed guide line.
-export function LiveMap({ points, ghost, height = 200, follow = false, interactive = true }) {
+export function LiveMap({ points, ghost, height = 200, follow = false, interactive = true, radius = 18 }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const segLinesRef = useRef([]);
@@ -109,8 +109,8 @@ export function LiveMap({ points, ghost, height = 200, follow = false, interacti
     segLinesRef.current = segs.map((seg) =>
       L.polyline(seg.lls, {
         color: phaseColor(seg.phase),
-        weight: 4,
-        opacity: 0.9,
+        weight: 5,
+        opacity: 0.95,
         lineJoin: "round",
         lineCap: "round",
       }).addTo(map)
@@ -143,34 +143,33 @@ export function LiveMap({ points, ghost, height = 200, follow = false, interacti
   const hasPhases = (points || []).some((p) => Array.isArray(p) ? p[2] : p.phase);
 
   return (
-    <div style={{ position: "relative", height, borderRadius: 12, overflow: "hidden", border: `1px solid ${C.line}`, background: C.bg }}>
+    <div style={{ position: "relative", height, borderRadius: radius, overflow: "hidden", background: C.bg, isolation: "isolate" }}>
       <div ref={elRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} aria-label="Run route map" />
       {failed && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
+        <div className="t-foot" style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
           Map unavailable — your run is still being recorded.
         </div>
       )}
       {!failed && (!points || points.length === 0) && !(ghost && ghost.length > 1) && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
+        <div className="t-foot" style={{ position: "absolute", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, pointerEvents: "none", textAlign: "center", padding: 12 }}>
           Waiting for GPS — your route will draw here.
         </div>
       )}
       {hasPhases && (
-        <div style={{
-          position: "absolute", top: 8, right: 8, zIndex: 500,
-          background: "rgba(11,12,15,0.82)", borderRadius: 8, padding: "5px 9px",
+        <div className="glass" style={{
+          position: "absolute", top: 10, right: 10, zIndex: 500, borderRadius: 12, padding: "6px 10px",
           display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 18, height: 3, background: C.accent, borderRadius: 2, display: "inline-block" }} />
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.accent }}>RUN</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 18, height: 3, background: C.easy, borderRadius: 2, display: "inline-block" }} />
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1, color: C.easy }}>WALK</span>
-          </div>
+          {[["Run", C.accent], ["Walk", C.easy]].map(([label, color]) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ width: 16, height: 4, background: color, borderRadius: 2, display: "inline-block" }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{label}</span>
+            </div>
+          ))}
         </div>
       )}
+      {/* a hairline rim, drawn above the tiles so it reads against any map */}
+      <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 600, borderRadius: radius, boxShadow: "inset 0 0 0 .5px rgba(255,255,255,.12)", pointerEvents: "none" }} />
     </div>
   );
 }

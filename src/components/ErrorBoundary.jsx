@@ -3,7 +3,7 @@
 // error message — instead of React unmounting the whole tree to a black screen.
 // Error boundaries must be class components; there is no hook equivalent.
 import React from "react";
-import { C } from "../data.js";
+import { C, tint } from "../data.js";
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -30,21 +30,21 @@ export class ErrorBoundary extends React.Component {
       <div style={{
         position: "fixed", inset: 0, zIndex: 9999, background: C.bg, color: C.text,
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        gap: 14, padding: 24, textAlign: "center", fontFamily: "'Manrope', system-ui, sans-serif",
+        gap: 14, padding: 24, textAlign: "center", fontFamily: "var(--font)",
         paddingTop: "max(24px, env(safe-area-inset-top))",
       }}>
-        <div style={{ fontSize: 40 }}>🛠️</div>
-        <div className="disp" style={{ fontSize: 20, fontWeight: 700 }}>Something glitched</div>
-        <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 340 }}>
+        <span style={{ width: 64, height: 64, borderRadius: "50%", background: tint(C.warn, 0.16), color: C.warn, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 30, fontWeight: 700 }}>!</span>
+        <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-.017em" }}>Something glitched</div>
+        <div style={{ fontSize: 15, lineHeight: 1.4, color: C.dim, maxWidth: 340 }}>
           The app hit an unexpected error. Your runs are saved on this device — reloading is safe.
         </div>
         <pre style={{
-          maxWidth: 360, width: "100%", overflow: "auto", textAlign: "left", fontSize: 11,
-          background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12,
+          maxWidth: 360, width: "100%", overflow: "auto", textAlign: "left", fontSize: 12,
+          background: C.surface, borderRadius: 14, padding: 12,
           color: C.warn, whiteSpace: "pre-wrap", margin: 0,
         }}>{msg}</pre>
         <button onClick={() => window.location.reload()}
-          style={{ border: "none", background: C.accent, color: C.bg, borderRadius: 999, padding: "13px 28px", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
+          style={{ border: "none", background: C.accent, color: C.onAccent, borderRadius: 999, padding: "14px 30px", fontSize: 17, fontWeight: 600, cursor: "pointer" }}>
           Reload app
         </button>
       </div>

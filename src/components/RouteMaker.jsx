@@ -6,10 +6,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { C } from "../data.js";
+import { C, tint } from "../data.js";
 import { haptic } from "../celebrate.js";
 import { loadSettings, saveSettings } from "../storage.js";
 import { LiveMap } from "./LiveMap.jsx";
+import { Icon, Segmented, Switch, GlassButton, Metric } from "./ui.jsx";
 import {
   loadNetwork, nearestNode, buildLoop, buildOutBack, snapWaypoints,
   radiusForTarget, haversineKm,
@@ -54,12 +55,8 @@ const dotIcon = (color, size, ring) => L.divIcon({
   className: "",
   iconSize: [size, size],
   iconAnchor: [size / 2, size / 2],
-  html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2.5px solid #0a0b0d;box-shadow:0 0 0 ${ring ? 2.5 : 1.5}px ${color}, 0 1px 4px rgba(0,0,0,.6)"></div>`,
+  html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2.5px solid ${C.bg};box-shadow:0 0 0 ${ring ? 2.5 : 1.5}px ${color}, 0 1px 4px rgba(0,0,0,.6)"></div>`,
 });
-
-const overlayPill = {
-  background: "rgba(11,12,15,0.9)", border: `1px solid ${C.line}`, borderRadius: 12,
-};
 
 const MODES = [
   { id: "loop", label: "Loop", hint: "A circuit on real streets that brings you back to the start." },
@@ -73,6 +70,9 @@ const yieldFrame = () => new Promise((r) => setTimeout(r, 30));
 
 export function RouteMaker({ onClose, onSelectRoute }) {
   const elRef = useRef(null);
+  const rootRef = useRef(null);
+  const statsRef = useRef(null);
+  const panelRef = useRef(null);
   const mapRef = useRef(null);
   const lineRef = useRef(null);
   const markersRef = useRef([]);
@@ -157,11 +157,26 @@ export function RouteMaker({ onClose, onSelectRoute }) {
     }
   }, [activeTab]);
 
+  // The map runs under floating glass: the stats card on top, the controls
+  // panel below. Keep the route inside the clear window between them.
   const fitRoute = (points) => {
     const map = mapRef.current;
     if (!map || !points || points.length < 2) return;
-    map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng])), { padding: [40, 40], maxZoom: 16 });
+    const top = statsRef.current ? statsRef.current.getBoundingClientRect().bottom + 18 : 40;
+    const bottom = panelRef.current ? panelRef.current.getBoundingClientRect().height + 36 : 40;
+    map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng])), {
+      paddingTopLeft: [28, top], paddingBottomRight: [28, bottom], maxZoom: 16,
+    });
   };
+
+  // Leaflet's own controls (the attribution) must stay visible above the panel.
+  useEffect(() => {
+    const panel = panelRef.current, root = rootRef.current;
+    if (!panel || !root || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => root.style.setProperty("--panel-h", `${panel.offsetHeight}px`));
+    ro.observe(panel);
+    return () => ro.disconnect();
+  }, []);
 
   // Draw the route polyline.
   useEffect(() => {
@@ -197,7 +212,7 @@ export function RouteMaker({ onClose, onSelectRoute }) {
       const isEnd = i === wpts.length - 1 && wpts.length > 1;
       const m = L.marker([p.lat, p.lng], {
         draggable: true,
-        icon: dotIcon(isStart ? C.accent : isEnd ? C.warn : "#ffffff", isStart || isEnd ? 16 : 12),
+        icon: dotIcon(isStart ? C.accent : isEnd ? C.warn : C.text, isStart || isEnd ? 16 : 12),
         keyboard: false,
       }).addTo(map);
       m.on("dragend", () => {
@@ -364,188 +379,126 @@ export function RouteMaker({ onClose, onSelectRoute }) {
     if (onClose) onClose();
   };
 
-  const tabChip = (active) => active
-    ? { flex: 1, textAlign: "center", background: C.accent, color: C.bg, border: "none", fontWeight: 800 }
-    : { flex: 1, textAlign: "center" };
-
   const modeHint = useMemo(() => MODES.find((m) => m.id === mode).hint, [mode]);
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9999, background: C.bg, color: C.text,
-      display: "flex", flexDirection: "column",
-      paddingTop: "max(10px, env(safe-area-inset-top))",
-    }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 16px 0" }}>
-        <div>
-          <div style={{ fontSize: 10, letterSpacing: 2, color: C.accent, fontWeight: 800 }}>ROUTE PLANNER</div>
-          <h2 className="disp" style={{ fontSize: 20, fontWeight: 700, margin: "1px 0 0" }}>Routes on real roads</h2>
-        </div>
-        <button onClick={() => { haptic(8); onClose(); }} className="chip tap" aria-label="Close route planner" style={{ padding: "8px 15px", fontSize: 14 }}>✕</button>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, padding: "10px 16px 12px" }}>
-        <button onClick={() => { setActiveTab("build"); haptic(5); }} className="chip tap" style={tabChip(activeTab === "build")}>Build</button>
-        <button onClick={() => { setActiveTab("saved"); haptic(5); }} className="chip tap" style={tabChip(activeTab === "saved")}>
-          Saved{savedRoutes.length ? ` (${savedRoutes.length})` : ""}
-        </button>
-      </div>
-
+    <div ref={rootRef} className="rm" role="dialog" aria-modal="true" aria-label="Route planner">
       {/* Build pane — hidden, not unmounted, so the map survives tab switches */}
-      <div style={{ flex: 1, display: activeTab === "build" ? "flex" : "none", flexDirection: "column", minHeight: 0 }}>
-        {/* Controls */}
-        <div style={{ padding: "10px 14px 11px", background: C.surface, borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, display: "grid", gap: 9 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            {MODES.map((m) => (
-              <button key={m.id} onClick={() => switchMode(m.id)} className="chip tap disp"
-                style={{
-                  flex: 1, textAlign: "center", fontSize: 12.5, padding: "8px 0",
-                  background: mode === m.id ? C.accent : C.bg, color: mode === m.id ? C.bg : C.dim,
-                  border: `1px solid ${mode === m.id ? C.accent : C.line}`, fontWeight: mode === m.id ? 800 : 600,
-                }}>
-                {m.label}
-              </button>
-            ))}
+      <div className="rm-build" style={{ display: activeTab === "build" ? "block" : "none" }}>
+        <div ref={elRef} className="rm-map" aria-label="Route plotting map" />
+
+        {/* Route stats, floating over the map */}
+        <div ref={statsRef} className="glass rm-stats">
+          <div style={{ display: "flex", gap: 20, alignItems: "flex-end" }}>
+            <Metric label="Distance" value={totalKm.toFixed(2)} unit="km" color={C.accent} size={26} />
+            <Metric label="Est. time" value={`~${estMinutes}`} unit="min" size={22} />
+            {route && <Metric label="On paths" value={route.pathPct} unit="%" color={C.good} size={22} />}
           </div>
+          {route && (
+            <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+              <Tag label={`${route.busyPct}% busy roads`} tone={route.busyPct > 25 ? C.warn : C.dim} />
+              <Tag label={route.repeatPct > 3 ? `${route.repeatPct}% doubles back` : "No doubling back"} tone={C.dim} />
+              <Tag label="Follows real roads" tone={C.accent} />
+            </div>
+          )}
+        </div>
+
+        {/* Controls, in a glass panel along the bottom — Maps' card */}
+        <div ref={panelRef} className="glass rm-panel">
+          <div className="rm-float">
+            {!route && !busy && wpts.length === 0 && (
+              <div className="glass t-foot" style={{ borderRadius: 999, padding: "8px 14px", color: C.text, pointerEvents: "none", maxWidth: "calc(100% - 70px)" }}>{modeHint}</div>
+            )}
+            {busy && (
+              <div className="glass t-foot" style={{ borderRadius: 999, padding: "8px 14px", color: C.text, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="spin" style={{ width: 13, height: 13, borderRadius: "50%", border: `2px solid ${tint(C.accent, 0.25)}`, borderTopColor: C.accent, flexShrink: 0 }} />
+                {busy === "network" ? "Reading the roads around you…" : "Finding the best route…"}
+              </div>
+            )}
+            <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+              {route && <GlassButton icon="route" label="Fit route" size={46} onClick={() => { haptic(6); fitRoute(route.points); }} />}
+              <GlassButton icon="location" label="Centre on my location" size={46} onClick={locateMe} style={{ color: C.blue }} />
+            </div>
+          </div>
+
+          {err && <div className="t-foot" style={{ color: C.warn, fontWeight: 600, margin: "0 4px 10px" }}>{err}</div>}
+
+          <Segmented items={MODES.map((m) => ({ id: m.id, label: m.label }))} value={mode} onChange={switchMode} style={{ marginBottom: 12 }} />
 
           {mode === "draw" ? (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 11.5, color: C.dim, flex: 1 }}>{modeHint}</span>
-              <button onClick={() => { haptic(6); setWpts((p) => p.slice(0, -1)); }} disabled={!wpts.length} className="chip tap"
-                style={{ fontSize: 12, padding: "7px 12px", color: wpts.length ? C.text : C.dim }}>Undo</button>
-              <button onClick={() => { haptic(8); setWpts([]); setRoute(null); setErr(""); }} disabled={!wpts.length} className="chip tap"
-                style={{ fontSize: 12, padding: "7px 12px", color: wpts.length ? C.warn : C.dim }}>Clear</button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+              <span className="t-foot" style={{ color: C.dim, flex: 1, paddingLeft: 4 }}>{modeHint}</span>
+              <button onClick={() => { haptic(6); setWpts((p) => p.slice(0, -1)); }} disabled={!wpts.length} className="btn" style={{ padding: "9px 14px" }}>Undo</button>
+              <button onClick={() => { haptic(8); setWpts([]); setRoute(null); setErr(""); }} disabled={!wpts.length} className="btn danger" style={{ padding: "9px 14px" }}>Clear</button>
             </div>
           ) : (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <button onClick={() => stepKm(-0.5)} className="chip tap" style={{ padding: "7px 12px" }} aria-label="Decrease distance">−</button>
-                <input className="inp num" type="number" inputMode="decimal" step="0.5" min="0.5" max="42" value={targetKmInput}
-                  onChange={(e) => setTargetKmInput(e.target.value)} aria-label="Target distance in km"
-                  style={{ width: 62, padding: "7px 4px", fontSize: 14, textAlign: "center" }} />
-                <button onClick={() => stepKm(0.5)} className="chip tap" style={{ padding: "7px 12px" }} aria-label="Increase distance">+</button>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.dim }}>km</span>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+              <div className="km-field">
+                <button onClick={() => stepKm(-0.5)} aria-label="Decrease distance"><Icon name="minus" size={17} weight={2.2} /></button>
+                <input className="num" type="number" inputMode="decimal" step="0.5" min="0.5" max="42" value={targetKmInput}
+                  onChange={(e) => setTargetKmInput(e.target.value)} aria-label="Target distance in km" />
+                <span>km</span>
+                <button onClick={() => stepKm(0.5)} aria-label="Increase distance"><Icon name="plus" size={17} weight={2.2} /></button>
               </div>
-              <button onClick={generate} disabled={!!busy} className="chip cta tap disp"
-                style={{ flex: 1, minWidth: 130, fontSize: 13, padding: "9px 14px", opacity: busy ? 0.6 : 1 }}>
-                {busy ? "Working…" : route ? "Try another route" : `Build ${mode === "loop" ? "loop" : "out & back"}`}
+              <button onClick={generate} disabled={!!busy} className="cta tap"
+                style={{ flex: 1, minWidth: 0, borderRadius: 999, padding: "12px 10px", fontSize: 16, whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Working…" : route ? "Try another" : `Build ${mode === "loop" ? "loop" : "out & back"}`}
               </button>
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={() => { setQuiet((q) => !q); haptic(6); setRoute(null); }} className="chip tap"
-              style={{ fontSize: 11.5, background: quiet ? `${C.accent}22` : C.bg, color: quiet ? C.accent : C.dim, borderColor: quiet ? C.accent : C.line }}>
-              {quiet ? "● " : "○ "}Quiet roads & paths
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 4px 10px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="t-sub" style={{ fontWeight: 500 }}>Quiet roads &amp; paths</div>
+              <div className="t-foot" style={{ color: C.dim }}>
+                {mode === "draw" ? "Each leg is routed along real streets." : "Tap the map, or drag the pin, to move the start."}
+              </div>
+            </div>
+            <Switch on={quiet} onClick={() => { setQuiet((q) => !q); haptic(6); setRoute(null); }} label="Quiet roads and paths" />
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <input className="inp" value={routeName} onChange={(e) => setRouteName(e.target.value)}
+              placeholder="Name this route" disabled={!canSave} style={{ flex: 1, borderRadius: 999, padding: "10px 16px" }} aria-label="Route name" />
+            <button onClick={handleSave} disabled={!canSave} className="cta tap"
+              style={{ borderRadius: 999, padding: "11px 20px", fontSize: 16, opacity: canSave ? 1 : 0.45 }}>
+              Save
             </button>
-            <span style={{ fontSize: 11, color: C.dim, flex: 1, lineHeight: 1.35 }}>
-              {mode === "draw" ? "Legs are routed along real streets." : "Tap the map (or drag the pin) to move the start."}
-            </span>
           </div>
-        </div>
-
-        {err && (
-          <div style={{ padding: "7px 14px", fontSize: 11.5, color: C.warn, background: C.surface, borderBottom: `1px solid ${C.line}` }}>{err}</div>
-        )}
-
-        {/* Map */}
-        <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
-          <div ref={elRef} style={{ position: "absolute", inset: 0 }} aria-label="Route plotting map" />
-
-          {/* Route stats */}
-          <div style={{ ...overlayPill, position: "absolute", top: 12, left: 12, right: 12, zIndex: 500, padding: "8px 12px" }}>
-            <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-              <div>
-                <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>DISTANCE</div>
-                <div className="num" style={{ fontSize: 18, fontWeight: 700, color: C.accent }}>{totalKm.toFixed(2)} km</div>
-              </div>
-              <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 12 }}>
-                <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>EST. TIME</div>
-                <div className="num" style={{ fontSize: 16, fontWeight: 700 }}>~{estMinutes} min</div>
-              </div>
-              {route && (
-                <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 12 }}>
-                  <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>ON PATHS</div>
-                  <div className="num" style={{ fontSize: 16, fontWeight: 700 }}>{route.pathPct}%</div>
-                </div>
-              )}
-            </div>
-            {route && (
-              <div style={{ display: "flex", gap: 6, marginTop: 7, flexWrap: "wrap" }}>
-                <Tag label={`${route.busyPct}% busy roads`} tone={route.busyPct > 25 ? C.warn : C.dim} />
-                <Tag label={route.repeatPct > 3 ? `${route.repeatPct}% doubles back` : "no doubling back"} tone={C.dim} />
-                <Tag label="follows real roads" tone={C.accent} />
-              </div>
-            )}
-          </div>
-
-          {/* First-use hint */}
-          {!route && !busy && wpts.length === 0 && (
-            <div style={{ position: "absolute", left: "50%", bottom: 64, transform: "translateX(-50%)", zIndex: 500, pointerEvents: "none", textAlign: "center", maxWidth: 280 }}>
-              <div style={{ ...overlayPill, padding: "11px 15px", fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>{modeHint}</div>
-            </div>
-          )}
-
-          {/* Busy indicator */}
-          {busy && (
-            <div style={{ ...overlayPill, position: "absolute", bottom: 62, left: "50%", transform: "translateX(-50%)", zIndex: 500, padding: "7px 15px", fontSize: 11.5, color: C.accent, fontWeight: 700 }}>
-              {busy === "network" ? "Reading the roads around you…" : "Finding the best route…"}
-            </div>
-          )}
-
-          {/* Map action buttons */}
-          <div style={{ position: "absolute", bottom: 12, right: 12, zIndex: 500, display: "flex", gap: 8 }}>
-            <button onClick={locateMe} className="chip tap" aria-label="Centre on my location"
-              style={{ ...overlayPill, color: C.text }}>⌖ My location</button>
-            {route && (
-              <button onClick={() => { haptic(6); fitRoute(route.points); }} className="chip tap"
-                style={{ ...overlayPill, color: C.text }}>Fit route</button>
-            )}
-          </div>
-        </div>
-
-        {/* Save bar */}
-        <div style={{ padding: "12px 14px calc(12px + env(safe-area-inset-bottom))", background: C.surface, borderTop: `1px solid ${C.line}`, display: "flex", gap: 10, alignItems: "center" }}>
-          <input className="inp" value={routeName} onChange={(e) => setRouteName(e.target.value)}
-            placeholder="Route name (e.g. Park loop 5K)" disabled={!canSave} style={{ flex: 1 }} />
-          <button onClick={handleSave} disabled={!canSave} className="tap cta disp"
-            style={{ borderRadius: 12, padding: "11px 20px", fontSize: 14, fontWeight: 700, border: "none", opacity: canSave ? 1 : 0.5 }}>
-            Save route
-          </button>
         </div>
       </div>
 
       {/* Saved routes pane */}
       {activeTab === "saved" && (
-        <div style={{ flex: 1, padding: "4px 16px calc(16px + env(safe-area-inset-bottom))", overflowY: "auto" }}>
+        <div className="rm-saved">
           {savedRoutes.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 36, color: C.dim }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🗺️</div>
-              <div className="disp" style={{ fontSize: 18, fontWeight: 700, color: C.text }}>No saved routes yet</div>
-              <div style={{ fontSize: 13, marginTop: 4, lineHeight: 1.5 }}>Build a loop or out &amp; back on the first tab, then save it here.</div>
+            <div style={{ textAlign: "center", padding: "56px 24px" }}>
+              <span style={{ width: 64, height: 64, borderRadius: "50%", background: tint(C.blue, 0.16), color: C.blue, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name="map" size={30} />
+              </span>
+              <div className="t-title3" style={{ marginTop: 14 }}>No saved routes yet</div>
+              <div className="t-sub" style={{ color: C.dim, marginTop: 6 }}>Build a loop or an out &amp; back, then save it here.</div>
             </div>
           ) : (
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 14 }}>
               {savedRoutes.map((r) => (
-                <div key={r.id} className="card rise" style={{ padding: 12, border: `1px solid ${C.line}`, borderRadius: 14 }}>
-                  <LiveMap points={r.points} height={96} interactive={false} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 8 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="disp" style={{ fontSize: 15.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
-                      <div style={{ fontSize: 11.5, color: C.dim, marginTop: 2 }}>
-                        {r.km} km{r.pathPct != null ? ` · ${r.pathPct}% on paths` : ""} · saved {new Date(r.createdAt).toLocaleDateString()}
-                      </div>
+                <div key={r.id} className="card rise" style={{ padding: 0, overflow: "hidden" }}>
+                  <LiveMap points={r.points} height={128} interactive={false} radius={0} />
+                  <div style={{ padding: "12px 16px 16px" }}>
+                    <div className="t-headline" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+                    <div className="t-foot" style={{ color: C.dim, marginTop: 2 }}>
+                      {r.km} km{r.pathPct != null ? ` · ${r.pathPct}% on paths` : ""} · saved {new Date(r.createdAt).toLocaleDateString()}
                     </div>
-                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                       {onSelectRoute && (
-                        <button onClick={() => handleSelect(r)} className="chip cta tap" style={{ fontSize: 12, padding: "7px 13px" }}>Use</button>
+                        <button onClick={() => handleSelect(r)} className="cta tap" style={{ flex: 1, borderRadius: 999, padding: "10px 0", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <Icon name="play" size={14} /> Run it
+                        </button>
                       )}
-                      <button onClick={() => handleEdit(r)} className="chip tap" style={{ fontSize: 12, padding: "7px 11px" }}>Edit</button>
-                      <button onClick={() => handleDelete(r.id)} className="chip tap"
-                        style={{ fontSize: 12, padding: "7px 11px", color: C.warn, borderColor: deleteArm === r.id ? C.warn : C.line, background: deleteArm === r.id ? `${C.warn}22` : C.bg, fontWeight: deleteArm === r.id ? 800 : 600 }}>
-                        {deleteArm === r.id ? "Sure?" : "Delete"}
+                      <button onClick={() => handleEdit(r)} className="btn" style={{ padding: "10px 18px" }}>Edit</button>
+                      <button onClick={() => handleDelete(r.id)} className="btn danger" aria-label={deleteArm === r.id ? "Confirm delete" : `Delete ${r.name}`}
+                        style={deleteArm === r.id ? { background: C.warn, color: C.onAccent, padding: "10px 16px" } : { padding: "10px 14px" }}>
+                        {deleteArm === r.id ? "Delete?" : <Icon name="trash" size={18} />}
                       </button>
                     </div>
                   </div>
@@ -555,13 +508,22 @@ export function RouteMaker({ onClose, onSelectRoute }) {
           )}
         </div>
       )}
+
+      {/* Header, over both panes */}
+      <div className="rm-head">
+        <GlassButton icon="xmark" label="Close route planner" size={44} onClick={() => { haptic(8); onClose(); }} />
+        <div className="glass" style={{ borderRadius: 999, flex: 1, maxWidth: 280, padding: 0 }}>
+          <Segmented items={[{ id: "build", label: "Build" }, { id: "saved", label: `Saved${savedRoutes.length ? ` · ${savedRoutes.length}` : ""}` }]}
+            value={activeTab} onChange={setActiveTab} style={{ background: "transparent" }} />
+        </div>
+      </div>
     </div>
   );
 }
 
 function Tag({ label, tone }) {
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: tone, border: `1px solid ${tone}44`, borderRadius: 999, padding: "3px 8px" }}>
+    <span className="tag" style={{ color: tone, background: tint(tone, 0.16), fontSize: 12, fontWeight: 600, letterSpacing: 0, padding: "3px 9px", borderRadius: 999 }}>
       {label}
     </span>
   );

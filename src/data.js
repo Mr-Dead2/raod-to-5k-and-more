@@ -43,42 +43,58 @@ export let FLAT = flatten(WEEKS);
 export let TOTAL = FLAT.length;
 export function applyPlan(weeks) { WEEKS = Array.isArray(weeks) && weeks.length ? weeks : DEFAULT_WEEKS; FLAT = flatten(WEEKS); TOTAL = FLAT.length; return WEEKS; }
 // ---------------------------------------------------------------------------
-// Design tokens. Everything reads `C` at render time, so mutating it in place
-// (applyAccent) plus a re-render is enough to re-theme the whole app.
+// Design tokens — Apple's dark appearance. Everything reads `C` at render time,
+// so mutating it in place (applyAccent) plus a re-render re-themes the app.
+//
+// Every value is an opaque hex on purpose: tint() only understands hex, and a
+// token handed to it as rgba() would silently turn into NaN. Translucent fills
+// live as CSS custom properties in app.css (--fill…, --sep) and the glass
+// materials in src/styles.js.
 // ---------------------------------------------------------------------------
 export const C = {
-  bg: "#07080b",          // page ground
-  bgSoft: "#0b0d11",      // inputs / recessed wells
-  surface: "#121419",     // primary card
-  surface2: "#181b22",    // nested card / chip
-  surface3: "#20242d",    // hover / raised chip
-  line: "#242833",        // hairline border
-  line2: "#333949",       // stronger border
-  text: "#f5f6f4",
-  dim: "#8d93a1",
-  dim2: "#636876",
+  bg: "#000000",          // systemBackground — true black, as in Fitness
+  bgSoft: "#0e0e10",      // a well sunk into the black ground
+  surface: "#1c1c1e",     // secondarySystemGroupedBackground — cells and cards
+  surface2: "#2c2c2e",    // tertiary — controls nested inside a cell
+  surface3: "#3a3a3c",    // systemGray4 — raised / pressed
+  line: "#38383a",        // opaqueSeparator
+  line2: "#48484a",       // systemGray3 — stronger stroke
+  text: "#ffffff",        // label
+  dim: "#8e8e93",         // systemGray — secondary label
+  dim2: "#6e6e73",        // tertiary label, kept legible on #1c1c1e
   accent: "#c8f73c",      // primary accent (swapped by applyAccent)
-  accent2: "#4be8a0",     // gradient partner for the accent
+  accent2: "#8ee03a",     // deeper tone of the same hue, for ring-style gradients
   run: "#c8f73c",
-  easy: "#45dcc2",
-  rest: "#5c6373",
-  warn: "#ff6a3d",
-  good: "#3ddc97",
+  easy: "#40cbe0",        // systemTeal
+  rest: "#636366",        // systemGray2
+  warn: "#ff453a",        // systemRed — errors, destructive, the End button
+  good: "#30d158",        // systemGreen
+  // Apple's system colours, used the way Fitness uses them: one colour per
+  // kind of metric, the same everywhere it appears.
+  yellow: "#ffd60a",      // time
+  pink: "#ff375f",        // energy
+  cyan: "#64d2ff",        // pace
+  purple: "#bf5af2",      // cadence
+  orange: "#ff9f0a",      // warnings that aren't errors
+  blue: "#0a84ff",        // links
+  gray: "#636366",        // systemGray2 — neutral badges, a switch that is on but inert
+  onAccent: "#000000",    // text and glyphs drawn on an accent (or any bright) fill
   // derived, kept in sync by applyAccent()
-  grad: "linear-gradient(135deg,#c8f73c 0%,#4be8a0 100%)",
-  gradSoft: "linear-gradient(135deg,#c8f73c22 0%,#4be8a018 100%)",
-  glow: "0 10px 34px -14px #c8f73c99",
+  grad: "linear-gradient(135deg,#c8f73c 0%,#8ee03a 100%)",
+  gradSoft: "linear-gradient(135deg,rgba(200,247,60,.16) 0%,rgba(142,224,58,.08) 100%)",
+  glow: "0 10px 28px -14px rgba(200,247,60,.55)",
 };
 export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
 
-// Accents ship in pairs so every gradient in the app stays on-brand.
+// Accents ship in pairs: the colour and a deeper tone of the same hue, so a
+// gradient reads like an Activity ring rather than a rainbow.
 export const ACCENTS = [
-  { id: "lime",   name: "Lime",   accent: "#c8f73c", accent2: "#4be8a0" },
-  { id: "sky",    name: "Sky",    accent: "#5cc8ff", accent2: "#8b7bff" },
-  { id: "gold",   name: "Gold",   accent: "#ffd84d", accent2: "#ff8a3d" },
-  { id: "violet", name: "Violet", accent: "#c08bff", accent2: "#ff7ad9" },
-  { id: "ember",  name: "Ember",  accent: "#ff7a45", accent2: "#ffc24d" },
-  { id: "mint",   name: "Mint",   accent: "#3ddc97", accent2: "#29c5f6" },
+  { id: "lime",   name: "Lime",   accent: "#c8f73c", accent2: "#8ee03a" },
+  { id: "sky",    name: "Sky",    accent: "#64d2ff", accent2: "#0a84ff" },
+  { id: "gold",   name: "Gold",   accent: "#ffd60a", accent2: "#ff9f0a" },
+  { id: "violet", name: "Violet", accent: "#bf5af2", accent2: "#5e5ce6" },
+  { id: "ember",  name: "Ember",  accent: "#ff7a45", accent2: "#ff453a" },
+  { id: "mint",   name: "Mint",   accent: "#63e6e2", accent2: "#30d158" },
 ];
 
 export function applyAccent(id) {
@@ -87,8 +103,8 @@ export function applyAccent(id) {
   C.accent2 = a.accent2;
   C.run = a.accent;
   C.grad = `linear-gradient(135deg,${a.accent} 0%,${a.accent2} 100%)`;
-  C.gradSoft = `linear-gradient(135deg,${a.accent}22 0%,${a.accent2}18 100%)`;
-  C.glow = `0 10px 34px -14px ${a.accent}99`;
+  C.gradSoft = `linear-gradient(135deg,${tint(a.accent, 0.16)} 0%,${tint(a.accent2, 0.08)} 100%)`;
+  C.glow = `0 10px 28px -14px ${tint(a.accent, 0.55)}`;
   if (typeof document !== "undefined") {
     const r = document.documentElement.style;
     r.setProperty("--app-accent", a.accent);
@@ -100,8 +116,30 @@ export function applyAccent(id) {
 }
 
 // Translucent tint of any token colour, e.g. tint(C.accent, 0.14).
-export const tint = (hex, alpha) => {
+export function tint(hex, alpha) {
   const h = String(hex).replace("#", "");
   const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
+const hue = (hex) => {
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  if (!d) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
 };
+const hueGap = (a, b) => { const d = Math.abs(hue(a) - hue(b)); return Math.min(d, 360 - d); };
+
+// Three ring colours in the spirit of Move / Exercise / Stand: the accent,
+// then the first two system colours that stay clearly apart from it (and from
+// each other), whichever accent the user picked.
+export function ringColors() {
+  const out = [C.accent];
+  for (const c of [C.cyan, C.pink, C.yellow, C.purple, C.good]) {
+    if (out.every((o) => hueGap(o, c) > 42)) out.push(c);
+    if (out.length === 3) break;
+  }
+  return out;
+}
