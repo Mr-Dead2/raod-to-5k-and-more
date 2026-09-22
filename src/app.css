@@ -1,23 +1,44 @@
-/* Base layer. The app's own design tokens and component styles live in the
-   <style> block in App.jsx (which is injected later in the document, so it
-   wins on ties); this file only sets the document ground, the fallback font
-   and a few input defaults. */
-:root { color-scheme: dark; --app-accent: #c8f73c; --app-accent-2: #4be8a0; }
-* { box-sizing: border-box; }
+/* Base layer. The app's own component styles live in src/styles.js (injected
+   by App in a <style> element later in the document, so they win on ties);
+   this file sets the document ground, the type families, the translucent
+   fills that adapt to whatever they sit on, and a few input defaults. */
+:root {
+  color-scheme: dark;
+  --app-accent: #c8f73c; --app-accent-2: #8ee03a;
+  /* San Francisco where the platform has it (Apple devices), Inter — the
+     closest open cousin, bundled with the app — everywhere else. */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter Variable", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter Variable", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-round: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Inter Variable", "Inter", system-ui, sans-serif;
+  /* iOS system fills (dark): translucent, so they read on black and on a cell */
+  --fill: rgba(120, 120, 128, .36);
+  --fill2: rgba(120, 120, 128, .32);
+  --fill3: rgba(118, 118, 128, .24);
+  --fill4: rgba(116, 116, 128, .18);
+  --label2: rgba(235, 235, 245, .6);
+  --label3: rgba(235, 235, 245, .3);
+  --sep: rgba(84, 84, 88, .65);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body, #root { min-height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
-  font-family: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #07080b;
-  color: #f5f6f4;
-  letter-spacing: -.01em;
+  font-family: var(--font);
+  font-size: 15px;
+  letter-spacing: -.009em;
+  background: #000;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
-button, input, select, textarea { font: inherit; }
-button { -webkit-tap-highlight-color: transparent; transition: transform .16s ease, filter .16s ease, border-color .16s ease, background .16s ease; }
-button:active { transform: scale(.97); }
+button, input, select, textarea { font: inherit; letter-spacing: inherit; }
+button { -webkit-user-select: none; user-select: none; color: inherit; transition: transform .12s ease-out, opacity .15s ease, background-color .2s ease; }
+/* Feedback lives on the press, and it is instant. */
+button:active:not(:disabled) { transform: scale(.97); }
 input, select, textarea { border-radius: 12px; }
-.chip { border-radius: 999px !important; }
 @media (max-width: 700px) { button { min-height: 42px; } input, select { min-height: 42px; } }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }

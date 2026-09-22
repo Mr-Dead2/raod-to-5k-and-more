@@ -121,25 +121,41 @@ front — the other headline reason to go native.
   `` `w${week}d${index}` `` — this key joins the plan to user progress, so any
   progress read/write must use that exact format, and `StreakGrid`/the "complete"
   achievement derive their size from the active plan (no hardcoded 4/28). `C` is
-  the entire color palette; use its tokens (`C.accent`, `C.run`,
-  `C.easy`, `C.rest`, …) and `typeColor(type)` instead of hardcoding hex.
+  the entire color palette — Apple's dark appearance: `bg` true black,
+  `surface`/`surface2`/`surface3` the grouped-cell greys, `text`/`dim`/`dim2`
+  the label ramp, `warn` systemRed, `good` systemGreen, plus one **metric colour
+  per kind of figure, used the same way everywhere** (`yellow` time, `cyan` pace,
+  `pink` energy, `purple` cadence, `good` elevation, `warn` heart rate, the accent
+  distance), `gray` for neutral badges and `onAccent` for text and glyphs drawn on
+  an accent fill. Use its tokens and `typeColor(type)` instead of hardcoding hex.
+  **Every token must stay an opaque hex**: `tint()` only parses hex, so an rgba
+  token would silently become NaN — translucent fills live as CSS custom
+  properties (`--fill`…`--fill4`, `--sep`, `--label2/3`) in `app.css`.
   `ACCENTS`/`applyAccent(id)` swap the accent (and `run`) colour by mutating `C`
   in place — everything reads `C` at render time, so a re-render is enough.
   `main.jsx` applies the persisted choice (settings key `accent`) before first
-  render; the Stats "Appearance" card switches it live. Accents ship in **pairs**
-  (`accent` + `accent2`); `applyAccent` also recomputes the derived `C.grad`,
-  `C.gradSoft` and `C.glow` tokens and mirrors all four onto CSS custom
-  properties (`--app-accent`, `--app-accent-2`, `--app-grad`, `--app-glow`).
-  `tint(hex, alpha)` turns any token into an `rgba()` string — use it instead of
-  appending hex alpha suffixes.
+  render; the Setup "Appearance" group switches it live. Accents ship in **pairs**
+  (`accent` + `accent2`, a deeper tone of the same hue, so a gradient reads like
+  an Activity ring rather than a rainbow); `applyAccent` also recomputes the
+  derived `C.grad`, `C.gradSoft` and `C.glow` tokens and mirrors all four onto CSS
+  custom properties (`--app-accent`, `--app-accent-2`, `--app-grad`,
+  `--app-glow`). `ringColors()` returns three Activity-ring colours — the accent
+  and the first two system colours that stay clear of it in hue, whichever accent
+  is picked. `tint(hex, alpha)` turns any token into an `rgba()` string — use it
+  instead of appending hex alpha suffixes.
 - **`src/App.jsx` — one stateful component, four tabs (`plan | stats | coach |
-  history`).** The shell is app chrome, not page content: a **sticky, blurred app
-  bar** (mark, wordmark, schedule eyebrow, a share button and a compact progress
-  ring) that is transparent at rest and gains its glass background once anything
-  scrolls under it (`scrolled`, a passive scroll listener; the `.appbar.stuck`
-  class). Each tab then opens with the same `<Screen title sub action />` header,
-  and changing tab scrolls to the top so a tab reads as a screen rather than a
-  section of one very long page. The AI coach has its own tab (chat + plan tools +
+  history`).** The shell is iOS navigation, not page content. Each tab opens
+  with `<Screen eyebrow title sub trailing />`: today's date in small caps, a
+  34 px large title, a line of context, and on the right the app-wide controls
+  (`appControls(size)`: a glass share button and the plan-progress ring, which
+  opens the overview). Above it a fixed `<NavBar />` is invisible at rest; once the
+  large title scrolls beneath it, it turns to blurred glass with the title
+  centred and the same two controls in it — iOS's collapsing large title.
+  `useNavCollapse()` drives this from one passive scroll listener that writes a
+  `--nav-p` custom property (0→1) and `nav-scrolled`/`nav-collapsed` classes on
+  `<html>`, **never React state**, so scrolling costs no re-renders. Changing tab
+  scrolls to the top so a tab reads as a screen rather than a section of one very
+  long page. The AI coach has its own tab (chat + plan tools +
   key setup); **Stats is split into five sub-screens by a `<Segmented />` control**
   (`statsView`: overview | goal | charts | awards | settings) rather than one
   mega-scroll — Overview is the headline distance card, tiles and PBs; Goal is the
@@ -154,10 +170,16 @@ front — the other headline reason to go native.
   first time a day is marked done (history/charts depend on this). `stats`,
   `weekly`, `history`, `paceTrend`, and `cumulative` are all `useMemo`s derived
   from `log`. The Plan tab leads with a hero card (today's session when
-  `startDate` maps one, else the next unfinished day) carrying the GPS-start and
-  mark-done actions; fully completed weeks render collapsed (tap the header to
-  expand) and every week header has a thin progress bar. History has filter
-  chips (all / runs / GPS) plus a totals summary line.
+  `startDate` maps one, else the next unfinished day) carrying the start-run and
+  mark-done actions; each week is an inset grouped list of day rows with a
+  Reminders-style tick, and fully completed weeks render collapsed (tap the header
+  to expand), every week header carrying a mini progress ring. "Reset all
+  progress" takes **two taps** (arm, then confirm within 3.5 s) — it is the one
+  irreversible action on the screen. The Stats overview leads with Activity-style
+  rings (sessions, this week's km, race readiness) under the total distance.
+  History filters with a segmented control (all / runs / walks / GPS), totals in
+  the subtitle, and each run is a Fitness workout card: route map, big distance
+  and a two-column `MetricGrid` in the metric colours.
 - **Persistence is split by access pattern.** Run progress → `localStorage`
   (`src/storage.js`, key `run5k:v2`). Reminder settings → **IndexedDB**
   (`src/idb.js`, a tiny dependency-free KV store) because the service worker
@@ -318,8 +340,10 @@ front — the other headline reason to go native.
 - **Charts (`src/components/Charts.jsx`)** are hand-rolled inline SVG (no chart
   lib): `WeeklyBars` (logged vs plan target per week), `CumulativeArea` (running
   distance total), `PaceTrend` (pace per run, Y inverted so up = faster), and
-  `StreakGrid` (a 4×7 calendar coloured by day status). They are purely
-  presentational — App computes the arrays/cells.
+  `StreakGrid` (a 4×7 calendar coloured by day status). They are drawn the way
+  Health draws them — dashed guides with their values on the right edge,
+  rounded-top bars, the one figure that matters called out — and are purely
+  presentational: App computes the arrays/cells.
 - **Start date / "today" (`src/storage.js` settings, key `run5k:settings`).** An
   optional `startDate` (a `YYYY-MM-DD` string) maps each plan day to a calendar
   date; `todayIndexOf`/`dateForDay` in `App.jsx` derive today's flat index, the
@@ -329,14 +353,30 @@ front — the other headline reason to go native.
   unlocked set and shows a toast (with `haptic`) when a new one appears.
   `src/celebrate.js` is a dependency-free `haptic()` (navigator.vibrate) and a
   self-cleaning canvas `confetti()` burst, fired from `update()` on completing a
-  day/week/the whole plan. Both respect `prefers-reduced-motion`.
-- **Bottom navigation (`src/components/BottomNav.jsx`)** is a floating glass dock
-  (Plan/Stats/Coach/History) with inline SVG icons and an accent pill that
-  *slides* between tabs via a `translateX` on one absolutely-positioned span —
-  the active state is a movement, not a swap. The active icon also thickens and
-  picks up an accent glow. A short gradient fade sits behind the dock so content
-  scrolls out of sight rather than being sliced off by its edge; page content
-  reserves bottom padding for it and the safe-area inset.
+  day/week/the whole plan. Both respect `prefers-reduced-motion`. Toasts are an
+  `<Island />` — a Dynamic Island–style black capsule that grows out of the top
+  of the screen and shrinks back the way it came (a cross-fade under reduced
+  motion); Awards are drawn as medals with a metallic accent rim.
+- **Bottom navigation (`src/components/BottomNav.jsx`)** is a Liquid Glass tab
+  bar: a floating capsule of blurred, saturated glass with a bright rim, filled
+  SF Symbols–style icons for the active tab, and a lens of lighter glass behind
+  it. The lens is driven by `useSlidingPill` (`src/components/useSlidingPill.js`),
+  shared with the segmented control: a tap moves it on a critically damped
+  spring; it can also be **dragged** along the bar 1:1 (rubber-banding past the
+  ends), and on release the flick is projected forward and lands on the slot it
+  was heading for, carrying the finger's velocity with a little bounce. A click
+  that follows a drag is swallowed. The pill's transform is written straight to
+  the DOM — no React state per frame. A short masked fade behind the bar makes
+  content scroll out of sight instead of being sliced off by its edge.
+- **Springs (`src/spring.js`).** Dependency-free, Apple's parameterisation:
+  `damping` (1 = critically damped, <1 bounces) and `response` (seconds), not
+  mass/stiffness. `createSpring()` animates from the *live* value and keeps
+  velocity when re-targeted, so anything built on it can be grabbed mid-flight;
+  `project()` is Apple's momentum projection, `rubberband()` the edge resistance,
+  `velocityTracker()` the release velocity (zero if the finger stopped before
+  lifting). Under `prefers-reduced-motion` a spring settles immediately. Use it
+  for anything a finger can touch (tab lens, segmented thumb, the share sheet);
+  plain CSS is fine for things that only appear.
 - **Live GPS run tracking.** `src/tracker.js` exposes a `useRunTracker()` hook
   over `src/geo.js`'s `startLocationWatch()` (web: `geolocation.watchPosition`;
   native: the background-geolocation foreground service, so tracking survives
@@ -366,7 +406,11 @@ front — the other headline reason to go native.
   route is downsampled to ≤250 `[lat,lng]` pairs to keep localStorage small.
   History renders the route thumbnail, split chips and extra-metric chips
   (elevation / kcal / run vs walk km) for tracked runs. The overlay
-  is only mounted while open so GPS stops the moment it closes. The tracker also
+  is only mounted while open so GPS stops the moment it closes — which is why,
+  once a run exists, its close button takes two taps (it turns into "Discard
+  run" first). It is laid out like Workout: elapsed time in yellow, distance
+  huge in the accent, a `MetricGrid` of the rest, and round End / Pause / Resume
+  controls in a sticky dock; the 3-2-1 sits in a ring that drains each second. The tracker also
   has a 3-2-1 countdown, GPS auto-pause (`opts.autoPause`, freezes the clock when
   stopped >7 s and resumes on movement), per-km audio cues (`src/cues.js`: Web
   Speech + Web Audio beeps), and **run/walk interval cues**: it parses the
@@ -427,7 +471,9 @@ front — the other headline reason to go native.
   Networks are memoised per rounded centre+radius, and `radiusForTarget()`
   keeps the Overpass download as small as the distance allows. RouteMaker has
   three modes (loop / out & back / draw), a draggable start pin, a "quiet roads
-  & paths" preference and a saved-routes tab; a saved route can be sent to the
+  & paths" preference and a saved-routes tab, presented like Maps — the map is
+  the whole screen and the controls float on glass (a `--panel-h` property keeps
+  Leaflet's attribution above the panel, and `fitRoute` pads for the overlays); a saved route can be sent to the
   tracker, where `LiveMap`'s `ghost` prop draws it as a dashed guide line.
 - **Haptics.** `haptic()` in `src/celebrate.js` uses `navigator.vibrate` on the
   web and **`@capacitor/haptics`** in the native app (impact taps for short
@@ -496,8 +542,13 @@ front — the other headline reason to go native.
   is a normal outcome, not an error. Entry points: the app bar and every screen
   header (progress card), History per run, RunTracker's finish screen (via its
   `onShare` prop — the tracker hands the run up rather than firing a card blind),
-  the Awards grid and the Goal segment.
-- **Backup / share / goal.** Stats has a Data card: JSON export (Blob download
+  the Awards grid and the Goal segment. The sheet is presented as an iOS sheet on
+  `spring.js`: it rises critically damped and always leaves downward (close
+  button, Escape, scrim tap, a successful share); its grabber + header are a drag
+  handle that tracks 1:1, resists being pulled above home, and on release
+  projects the flick — far enough and it dismisses at the finger's speed,
+  otherwise it springs back. `onClose` only runs once it has left the screen.
+- **Backup / share / goal.** Stats → Setup has a Data & backup group: JSON export (Blob download
   on the web; Filesystem + share sheet natively, payload `version: 2` with the
   full settings object), import, and `navigator.share` progress text (clipboard
   fallback for the backup file). Import **merges** per session key (backup wins per key, nothing is
@@ -511,8 +562,10 @@ front — the other headline reason to go native.
 
 ## Gotchas that have already bitten
 
-- **Layout primitives must live at module scope.** `Card`, `Screen`, `Segmented`,
-  `Tile`, `Label` and `Bar` are defined next to `App`, not inside it. Defined
+- **Layout primitives must live at module scope.** `Card`, `Screen`, `NavBar`,
+  `Segmented`, `Tile`, `Label`, `Bar`, `Group`, `Cell`, `Switch`, `Stepper`,
+  `Metric`/`MetricGrid`, `Rings` and `Island` live in `src/components/ui.jsx`
+  (plus `PBValue` next to `App`), never inside a component body. Defined
   inside the component they are a new component type on every render, so React
   unmounts and remounts their entire subtree whenever state changes — which
   destroys the focused element. The symptom was that every text field in the app
@@ -527,37 +580,64 @@ front — the other headline reason to go native.
 
 ## Styling conventions
 
-- All styling is inline `style={{}}` objects plus one `<style>` block in
-  `App.jsx` for fonts, keyframes and utility classes (`.disp`, `.num`, `.row`,
-  `.card`, `.cta`, `.chip`, `.chip.on`, `.gtext`, `.lab`, `.bar`, `.inp`, `.sw`,
-  `.tick`, `.seg`, `.hscroll`, `.appbar`, `.glow`, `.rise`, `.stagger`,
-  `.aurora`). **Any control smaller than 42px needs an explicit `min-height`**:
-  `app.css` sets `button { min-height: 42px }` under 700px for touch targets, and
-  without the override that rule stretched the round `.tick` and the `.sw` switch
-  into ovals. `src/app.css` is only the base layer
-  (document ground, fallback font, input defaults); the `App.jsx` block is
-  injected later in the document, so it wins on ties. No framework.
-- Fonts: `Space Grotesk` (display headings/numbers via `.disp`/`.num`) and
-  `Manrope` (body), from Google Fonts in the `<style>` block. Safe-area insets
-  are handled via `env(safe-area-inset-*)` for notched phones.
-- **Design language: lit dark.** The ground is near-black with a fixed `.aurora`
-  layer behind everything — three slow-drifting blurred accent blobs that give
-  the page depth instead of a flat slab. Surfaces are lit from the top-left:
-  `.card` is a subtle gradient with a hairline rim highlight
-  (`inset 0 1px 0`) and a deep soft shadow, and `.card.accented` is the same
-  shape tinted with the accent pair for hero cards. The accent gradient
-  (`C.grad`) is the app's signature: it fills the primary `.cta` (with the
-  `C.glow` shadow), the active `.chip.on`, the "today" badge, the progress
-  `.bar`, the nav's sliding pill, and — via `.gtext` — the one hero numeral per
-  card. Keep it to *one* gradient numeral per card; everything else is
-  `C.text`/`C.dim`, or a semantic colour (`C.easy`, `C.warn`, `C.good`).
-  Charts paint their marks with the same gradient through `AccentDefs`.
+- **Design language: Apple, dark.** The app follows iOS and Apple Fitness: a
+  true-black ground, grouped surfaces that get *lighter* as they nest
+  (`surface` → `surface2` → `surface3`, never darker "wells"), glass only for
+  chrome that floats over content (nav bar, tab bar, bar buttons, map panels),
+  vivid colour reserved for data (rings, metrics, charts) and the one primary
+  action per card. A still accent wash (`.ambient`) bleeds in behind the large
+  title; nothing on the ground moves by itself.
+- All styling is inline `style={{}}` objects plus the stylesheet in
+  `src/styles.js` (`appCss()`, a function of the live `C` tokens that App
+  injects in a `<style>` element — so an accent switch re-themes everything).
+  `src/app.css` is the static base: font stacks, the translucent iOS fills
+  (`--fill`…`--fill4`, `--sep`, `--label2/3`), global press feedback
+  (`button:active` scales on touch-down; `main.jsx` adds an empty `touchstart`
+  listener so iOS Safari applies `:active`) and input defaults. **Any control
+  smaller than 42px needs an explicit `min-height`** (with `!important` inside the
+  stylesheet): `app.css` sets `button { min-height: 42px }` under 700px for touch
+  targets, and without the override that rule stretches round controls (`.tick`,
+  `.sw`, the stepper, the send button) into ovals.
+- **Components, not ad-hoc boxes.** Settings-style content is a `<Group header
+  footer>` of `<Cell icon iconColor title sub value trailing chevron onClick>`
+  rows — a coloured `IconBadge` squircle, inset hairline separators
+  (`--inset`), and a row with `onClick` becomes a button that *highlights* on
+  touch-down like a table cell instead of shrinking. On/off is always `<Switch>`
+  (the iOS switch, knob stretching under a finger; `muted` for on-but-inert),
+  either/or is `<Segmented>`, counts are `<Stepper>`, figures are `<Metric>` /
+  `<MetricGrid>` in their metric colour, progress is `<Rings>` or `.bar`.
+  Classes: `.card` (+ `.accented` for hero cards, `.glow`), `.cta` (the one
+  primary action: accent capsule with a top sheen), `.btn` (grey capsule;
+  `.tinted`, `.danger`), `.link` (text button in the accent), `.chip`/`.chip.on`
+  (filters and toggles), `.glass`/`.glass-btn`, `.inp`, `.lab` (small caps field
+  label), `.pill`/`.tag`, `.bubble.me/.them` + `.composer` (Messages),
+  `.hscroll`, `.sheet`/`.close-btn`, `.tracker`/`.tracker-dock`, `.rm-*`.
+- **Type: Apple's text styles.** `.t-large` (34), `.t-title1/2/3` (28/22/20),
+  `.t-headline`/`.t-body` (17), `.t-callout` (16), `.t-sub` (15), `.t-foot` (13),
+  `.t-cap`/`.t-cap2` (12/11). Tracking is size-specific — negative as type grows,
+  near zero for body — and baked into the classes; body copy is 15–17px, not 12.
+  Families: San Francisco where the platform has it (`-apple-system`), otherwise
+  the bundled **Inter Variable** with its optical-size axis
+  (`@fontsource-variable/inter`, imported in `main.jsx`; its Latin files are in
+  the PWA precache, so the type works offline and in the APK). `.num` is for
+  figures — SF Pro Rounded (`ui-rounded`) on Apple devices, as Fitness sets them,
+  with tabular numerals. There are no Google Fonts; share cards use the same
+  stacks.
 - Use the `C` tokens and `tint(C.x, alpha)` — never hardcode a hex or append a
-  hex alpha suffix, or the accent switcher will not reach it.
-- UI chrome uses the inline SVG `Icon` set in `App.jsx` (and BottomNav's icons),
-  never emoji; emoji are reserved for celebratory content (achievement badges,
-  toasts). Buttons are sentence case; tiny letter-spaced ALL-CAPS is only for
-  section labels, which should go through the `<Label>` helper.
-- Motion is short and purposeful: `.stagger` for list entrances, `.pop` for a
-  tick, the nav pill's slide, the ring's `stroke-dashoffset` transition. Every
-  animation is disabled under `prefers-reduced-motion`.
+  hex alpha suffix, or the accent switcher will not reach it. Text on an accent
+  fill is `C.onAccent`. Missing readings are a grey em dash, not `--:--`.
+- UI chrome uses the SF Symbols–style `Icon` set in `ui.jsx` (and BottomNav's
+  filled/outline tab icons), never emoji; emoji are reserved for celebratory
+  content (achievement badges, toasts, the effort scale). Buttons and labels are
+  sentence case; small caps are for the date eyebrow, group headers and field
+  labels only.
+- **Motion.** Springs (`src/spring.js`) for anything a finger can touch —
+  interruptible, velocity-aware; short CSS for things that merely appear
+  (`.rise`, `.stagger`, `.pop` on a tick, rings winding up, full-screen covers
+  rising with `coverUp`). Feedback lands on touch-down. Enter and exit along the
+  same path (the sheet and the Island leave the way they came).
+- **Accessibility settings are honoured in `styles.js`:** `prefers-reduced-motion`
+  swaps slides and springs for short cross-fades; `prefers-reduced-transparency`
+  turns glass solid; `prefers-contrast: more` adds real borders and stronger
+  separators. Invisible chrome (the collapsed bar's buttons at rest) is
+  `visibility: hidden`, so it is out of the tab order until it can be seen.

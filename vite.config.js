@@ -10,8 +10,11 @@ export default defineConfig({
   define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   plugins: [react(), VitePWA({
     strategies:"injectManifest", srcDir:"src", filename:"sw.js", registerType:"autoUpdate",
+    // The Latin cuts of the bundled Inter ship with the precache, so the app
+    // keeps its type offline; other scripts load on demand if a page needs them.
+    injectManifest:{ globPatterns:["**/*.{js,css,html}", "**/inter-latin-*.woff2"] },
     includeAssets:["icons/icon-192.png","icons/icon-512.png","icons/maskable-512.png"],
-    manifest:{name:"Stride",short_name:"Stride",description:"A modern run tracker for building speed, distance and consistency.",theme_color:"#07080b",background_color:"#07080b",display:"standalone",orientation:"portrait",start_url:".",scope:".",icons:[{src:"icons/icon-192.png",sizes:"192x192",type:"image/png"},{src:"icons/icon-512.png",sizes:"512x512",type:"image/png"},{src:"icons/maskable-512.png",sizes:"512x512",type:"image/png",purpose:"maskable"}]},
+    manifest:{name:"Stride",short_name:"Stride",description:"A modern run tracker for building speed, distance and consistency.",theme_color:"#000000",background_color:"#000000",display:"standalone",orientation:"portrait",start_url:".",scope:".",icons:[{src:"icons/icon-192.png",sizes:"192x192",type:"image/png"},{src:"icons/icon-512.png",sizes:"512x512",type:"image/png"},{src:"icons/maskable-512.png",sizes:"512x512",type:"image/png",purpose:"maskable"}]},
     devOptions:{enabled:true,type:"module"}
   }), cloudflare()]
 });

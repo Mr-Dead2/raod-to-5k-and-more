@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { C, tint } from "../data.js";
 import { LiveMap } from "./LiveMap.jsx";
+import { Icon, Group, Cell, Switch, Stepper, Segmented, MetricGrid } from "./ui.jsx";
 import { useRunTracker, haversine } from "../tracker.js";
 import { haptic } from "../celebrate.js";
 import { ensureLocationPermission, isNative } from "../native.js";
@@ -19,7 +20,13 @@ const fmtTime = (ms) => {
   const mm = String(m).padStart(2, "0"), ss = String(sec).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
-const fmtPace = (secPerKm) => (secPerKm && isFinite(secPerKm) ? `${Math.floor(secPerKm / 60)}:${String(Math.round(secPerKm % 60)).padStart(2, "0")}` : "--:--");
+const fmtPace = (secPerKm) => (secPerKm && isFinite(secPerKm) ? `${Math.floor(secPerKm / 60)}:${String(Math.round(secPerKm % 60)).padStart(2, "0")}` : null);
+
+// One metric for the Workout grid. No reading yet is an em dash in grey, as
+// Health shows it — not a row of hyphens pretending to be a number.
+const metric = (label, value, unit, color) => (value == null || value === "" || Number.isNaN(value)
+  ? { label, value: "—", color: C.dim2 }
+  : { label, value, unit, color });
 
 function recentPaceSec(points, windowM = 200) {
   if (points.length < 2) return 0;
@@ -44,49 +51,81 @@ function downsample(points, max = 250) {
   return out;
 }
 
-function Toggle({ on, label, onClick }) {
-  return (
-    <button onClick={onClick} className="chip"
-      style={{ background: on ? C.surface2 : "transparent", color: on ? C.text : C.dim, border: `1px solid ${on ? C.accent : C.line}`, padding: "8px 12px" }}>
-      {on ? "✓ " : ""}{label}
-    </button>
-  );
-}
-
 // Pull a "run X / walk Y" pattern (minutes) out of a session's description.
 function parseInterval(detail = "") {
   const m = detail.match(/run\s*(\d+)\s*(?:min)?\s*\/\s*walk\s*(\d+)/i);
   return m ? { run: Number(m[1]), walk: Number(m[2]) } : null;
 }
 
-function StepCard({ label, val, set, unit = "MIN" }) {
-  return (
-    <div className="card" style={{ flex: 1, borderRadius: 14, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
-      <button className="chip" onClick={() => { set((v) => Math.max(0, v - 1)); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>−</button>
-      <div style={{ flex: 1, textAlign: "center" }}>
-        <div className="num" style={{ fontSize: 18, fontWeight: 700 }}>{val}</div>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: 1, fontWeight: 700 }}>{label} {unit}</div>
-      </div>
-      <button className="chip" onClick={() => { set((v) => v + 1); haptic(6); }} style={{ padding: "4px 11px", fontSize: 16 }}>+</button>
-    </div>
-  );
-}
-
 // Live run-vs-walk breakdown while interval cues are on: distance, time and
 // pace covered in each phase.
 function PhaseBreakdown({ runM, walkM, runSec, walkSec }) {
   if (runM + walkM < 20) return null;
-  const row = (label, m, sec, color) => (
-    <div className="card" style={{ flex: 1, borderRadius: 14, padding: "10px", textAlign: "center", borderColor: tint(color, .35), background: `linear-gradient(160deg,${tint(color, .13)},${C.surface} 70%)` }}>
-      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color }}>{label}</div>
-      <div className="num" style={{ fontSize: 17, fontWeight: 700, marginTop: 2 }}>{(m / 1000).toFixed(2)} km</div>
-      <div className="num" style={{ fontSize: 11, color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0)}/km</div>
+  const block = (label, m, sec, color) => (
+    <div className="card" style={{ flex: 1, borderRadius: 20, padding: "12px 14px", background: `linear-gradient(160deg, ${tint(color, 0.16)}, ${C.surface} 70%)` }}>
+      <div className="t-foot" style={{ fontWeight: 600, color }}>{label}</div>
+      <div className="num" style={{ fontSize: 24, fontWeight: 700, marginTop: 2 }}>{(m / 1000).toFixed(2)}<span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>KM</span></div>
+      <div className="num t-foot" style={{ color: C.dim, marginTop: 1 }}>{fmtTime(sec * 1000)} · {fmtPace(m > 20 ? sec / (m / 1000) : 0) ? `${fmtPace(sec / (m / 1000))}/km` : "—"}</div>
     </div>
   );
   return (
-    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-      {row("RUN", runM, runSec, C.accent)}
-      {row("WALK", walkM, walkSec, C.easy)}
+    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+      {block("Running", runM, runSec, C.accent)}
+      {block("Walking", walkM, walkSec, C.easy)}
+    </div>
+  );
+}
+
+// Splits as Fitness shows them: one row per kilometre, a bar as long as the
+// kilometre was fast, the fastest picked out in the pace colour.
+function SplitsTable({ splits }) {
+  if (!splits.length) return null;
+  const fast = Math.min(...splits), slow = Math.max(...splits);
+  return (
+    <div className="card" style={{ padding: "14px 16px 6px", marginTop: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", marginBottom: 4 }}>
+        <span className="t-headline">Splits</span>
+        <span className="t-foot" style={{ marginLeft: "auto", color: C.dim }}>pace per km</span>
+      </div>
+      {splits.map((s, i) => {
+        const w = slow === fast ? 1 : 0.42 + 0.58 * ((slow - s) / (slow - fast));
+        const best = s === fast && splits.length > 1;
+        return (
+          <div key={i} className="split-row">
+            <span className="num t-foot" style={{ width: 20, color: C.dim }}>{i + 1}</span>
+            <span className="split-bar"><i style={{ width: `${w * 100}%`, background: best ? C.cyan : undefined }} /></span>
+            <span className="num" style={{ width: 50, textAlign: "right", fontSize: 16, fontWeight: 600, color: best ? C.cyan : C.text }}>{fmtPace(s)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Workout's big round controls: colour says what they do before the label does.
+function RoundControl({ label, color, icon, onClick }) {
+  return (
+    <button onClick={onClick} className="round-ctl" aria-label={label}>
+      <span style={{ background: tint(color, 0.24), color }}><Icon name={icon} size={30} weight={2.8} /></span>
+      <span className="t-foot" style={{ fontWeight: 600 }}>{label}</span>
+    </button>
+  );
+}
+
+// The 3-2-1: each number sits in a ring that drains over its second.
+function Countdown({ count }) {
+  const go = count === "GO";
+  return (
+    <div className="countdown" role="status" aria-live="assertive">
+      <div style={{ position: "relative", width: 236, height: 236 }}>
+        <svg width="236" height="236" viewBox="0 0 236 236" style={{ transform: "rotate(-90deg)", display: "block" }} aria-hidden="true">
+          <circle cx="118" cy="118" r="106" fill="none" stroke={tint(C.accent, 0.18)} strokeWidth="14" />
+          {!go && <circle key={count} cx="118" cy="118" r="106" fill="none" stroke={C.accent} strokeWidth="14" strokeLinecap="round" pathLength="100" strokeDasharray="100" className="count-ring" />}
+        </svg>
+        <div key={count} className="num pop" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: go ? 78 : 120, fontWeight: 700, color: C.accent }}>
+          {go ? "Go" : count}
+        </div>
+      </div>
     </div>
   );
 }
@@ -145,7 +184,7 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
   const [goalType, setGoalType] = useState(() => loadSettings().runGoalType || "none"); // none | distance | time
   const [goalDist, setGoalDist] = useState(() => loadSettings().runGoalDist || 5);
   const [goalTime, setGoalTime] = useState(() => loadSettings().runGoalTime || 30);
-  const saveGoalType = (v) => { setGoalType(v); saveSettings({ ...loadSettings(), runGoalType: v }); haptic(6); };
+  const saveGoalType = (v) => { setGoalType(v); saveSettings({ ...loadSettings(), runGoalType: v }); };
   const setGoalDistP = (fn) => setGoalDist((v) => { const n = Math.max(1, typeof fn === "function" ? fn(v) : fn); saveSettings({ ...loadSettings(), runGoalDist: n }); return n; });
   const setGoalTimeP = (fn) => setGoalTime((v) => { const n = Math.max(1, typeof fn === "function" ? fn(v) : fn); saveSettings({ ...loadSettings(), runGoalTime: n }); return n; });
 
@@ -271,17 +310,6 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
     }, 1000);
   };
 
-  const Big = ({ label, value, color }) => (
-    <div style={{
-      flex: 1, textAlign: "center", padding: "11px 4px", borderRadius: 14,
-      background: `linear-gradient(160deg,${tint(C.text, .04)},transparent 75%)`,
-      border: `1px solid ${C.line}`,
-    }}>
-      <div className="num" style={{ fontSize: 27, fontWeight: 700, color: color || C.text, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 8.5, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginTop: 6 }}>{label}</div>
-    </div>
-  );
-
   const save = () => {
     onSave({
       dayKey,
@@ -299,360 +327,335 @@ export function RunTracker({ onClose, onSave, onShare, days, defaultKey, targetR
     haptic([15, 30, 15]);
   };
 
+
+  // Closing mid-run throws the run away, so while there is a run to lose the
+  // close button takes a second tap — and says what it will do on the first.
+  const [closeArmed, setCloseArmed] = useState(false);
+  const closeTimer = useRef(0);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  const requestClose = () => {
+    if (t.status === "idle" || closeArmed) { clearTimeout(closeTimer.current); onClose(); return; }
+    haptic(8);
+    setCloseArmed(true);
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setCloseArmed(false), 3000);
+  };
+
+  const stepper = (label, set, step = 1, min = 0) => (
+    <Stepper label={label}
+      onMinus={() => { set((v) => Math.max(min, v - step)); haptic(6); }}
+      onPlus={() => { set((v) => v + step); haptic(6); }} />
+  );
+
+  const title = t.status === "finished" ? "Run summary" : t.status === "paused" ? "Paused" : "Outdoor run";
+
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 200, color: C.text,
-      background: `radial-gradient(120% 60% at 50% -10%, ${tint(C.accent, .12)} 0%, transparent 62%), ${C.bg}`,
-      display: "flex", flexDirection: "column",
-      padding: "max(18px, env(safe-area-inset-top)) 18px calc(18px + env(safe-area-inset-bottom))",
-      fontFamily: "'Manrope', system-ui, sans-serif", overflowY: "auto",
-    }}>
+    <div className="tracker" role="dialog" aria-modal="true" aria-label="Run tracker">
       {/* 3-2-1 countdown overlay */}
-      {count != null && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(11,12,15,0.96)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div key={count} className="num pop gtext" style={{ fontSize: count === "GO" ? 84 : 120, fontWeight: 700 }}>{count}</div>
-        </div>
-      )}
+      {count != null && <Countdown count={count} />}
 
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
-        <div className="disp" style={{ fontSize: 18, fontWeight: 700 }}>{t.status === "finished" ? "Run summary" : "Track run"}</div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-          {t.status !== "idle" && t.status !== "finished" && (
-            <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, color: accColor }}>
-              <span style={{ width: 8, height: 8, borderRadius: 8, background: accColor }} />
-              GPS {t.accuracy != null ? `±${Math.round(t.accuracy)}m` : "…"}
-            </span>
-          )}
-          <button onClick={onClose} className="chip" style={{ padding: "6px 12px" }}>✕</button>
-        </div>
-      </div>
-
-      {t.error && (
-        <div style={{ background: C.surface, border: `1px solid ${C.warn}`, color: C.warn, borderRadius: 12, padding: 12, fontSize: 13, marginBottom: 14 }}>{t.error}</div>
-      )}
-
-      {/* IDLE */}
-      {t.status === "idle" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", textAlign: "center", gap: 16 }}>
-          <div style={{ width: 64, height: 64, margin: "0 auto", borderRadius: "50%", background: `${C.accent}14`, border: `1px solid ${C.accent}55`, display: "flex", alignItems: "center", justifyContent: "center", color: C.accent }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
-              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-            </svg>
-          </div>
-          <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>Ready when you are</div>
-          <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" }}>
-            {isNative()
-              ? "Head outside with a clear view of the sky, then press start. You can turn the screen off or switch apps — tracking keeps running in the background (you'll see a notification while it records)."
-              : "Head outside with a clear view of the sky, then press start. Keep this screen open while you run — the browser pauses GPS when the screen is off, so the app holds it awake for you."}
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "center", margin: "2px auto 0", flexWrap: "wrap" }}>
-            <Toggle on={audioOn} label="Voice cues" onClick={() => { setAudioOn((v) => !v); haptic(6); }} />
-            <Toggle on={autoPauseOn} label="Auto-pause" onClick={() => { setAutoPauseOn((v) => !v); haptic(6); }} />
-          </div>
-          <div style={{ maxWidth: 320, width: "100%", margin: "0 auto" }}>
-            <Toggle on={intervalOn} label="Run / walk buzz cues" onClick={() => { setIntervalOn((v) => !v); haptic(6); }} />
-            {intervalOn && (
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <StepCard label="RUN" val={runMin} set={setRunMin} />
-                <StepCard label="WALK" val={walkMin} set={setWalkMin} />
-              </div>
+      <div className="tracker-inner">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, minHeight: 44 }}>
+          <h1 className="t-title1" style={{ margin: 0, minWidth: 0 }}>{title}</h1>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {tracking && (
+              <span className="gps-pill" style={{ color: accColor }}>
+                <i style={{ background: accColor }} />
+                GPS {t.accuracy != null ? `±${Math.round(t.accuracy)} m` : "…"}
+              </span>
             )}
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <StepCard label="WEIGHT" unit="KG" val={weightKg} set={setWeight} />
-            </div>
-            <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>Weight is only used for the calorie estimate.</div>
+            {closeArmed ? (
+              <button onClick={requestClose} className="btn danger" style={{ padding: "7px 14px", fontSize: 15, minHeight: 0 }}>Discard run</button>
+            ) : (
+              <button onClick={requestClose} className="close-btn" aria-label="Close tracker"><Icon name="xmark" size={15} weight={2.6} /></button>
+            )}
+          </div>
+        </div>
 
-            {/* Run goal */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700, marginBottom: 8, textAlign: "left" }}>RUN GOAL</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {[["none", "Off"], ["distance", "Distance"], ["time", "Time"]].map(([v, lbl]) => (
-                  <button key={v} onClick={() => saveGoalType(v)} className="chip"
-                    style={{ flex: 1, background: goalType === v ? C.accent : C.surface, color: goalType === v ? C.bg : C.dim, border: `1px solid ${goalType === v ? C.accent : C.line}`, fontWeight: 700 }}>
-                    {lbl}
-                  </button>
-                ))}
+        {t.error && (
+          <div className="t-sub" style={{ background: tint(C.warn, 0.14), color: C.text, borderRadius: 16, padding: "12px 14px", marginBottom: 16, display: "flex", gap: 10 }}>
+            <span style={{ color: C.warn, display: "flex", flexShrink: 0, paddingTop: 2 }}><Icon name="info" size={18} /></span>{t.error}
+          </div>
+        )}
+
+        {/* IDLE */}
+        {t.status === "idle" && (
+          <div className="rise tracker-body">
+            <div className="card accented" style={{ padding: "18px 18px", marginBottom: 26, display: "flex", gap: 14, alignItems: "center" }}>
+              <span style={{ width: 54, height: 54, borderRadius: "50%", flexShrink: 0, background: tint(C.accent, 0.18), color: C.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name="run" size={30} weight={2.1} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div className="t-headline">Ready when you are</div>
+                <div className="t-foot" style={{ color: C.dim, marginTop: 3 }}>
+                  {isNative()
+                    ? "Head outside with a clear view of the sky. You can turn the screen off or switch apps — tracking keeps running, with a notification while it records."
+                    : "Head outside with a clear view of the sky. Keep this screen open while you run — the browser pauses GPS when the screen is off, so the app holds it awake for you."}
+                </div>
+              </div>
+            </div>
+
+            <Group header="Cues">
+              <Cell icon="speaker" iconColor={C.blue} title="Voice cues" sub="Splits and pace, spoken"
+                trailing={<Switch on={audioOn} onClick={() => { setAudioOn((v) => !v); haptic(6); }} label="Voice cues" />} />
+              <Cell icon="pauseCircle" iconColor={C.orange} title="Auto-pause" sub="Stops the clock when you stop"
+                trailing={<Switch on={autoPauseOn} onClick={() => { setAutoPauseOn((v) => !v); haptic(6); }} label="Auto-pause" />} />
+              <Cell icon="repeat" iconColor={C.purple} title="Run / walk intervals" sub="A buzz and a voice at every switch"
+                trailing={<Switch on={intervalOn} onClick={() => { setIntervalOn((v) => !v); haptic(6); }} label="Run / walk intervals" />} />
+              {intervalOn && (
+                <>
+                  <Cell title="Run" value={<span className="num" style={{ color: C.text }}>{runMin} min</span>} trailing={stepper("run minutes", setRunMin)} style={{ "--inset": "60px", paddingLeft: 60 }} />
+                  <Cell title="Walk" value={<span className="num" style={{ color: C.text }}>{walkMin} min</span>} trailing={stepper("walk minutes", setWalkMin)} style={{ "--inset": "60px", paddingLeft: 60 }} />
+                </>
+              )}
+            </Group>
+
+            <Group header="Goal">
+              <div className="cell" style={{ display: "block", padding: 12 }}>
+                <Segmented items={[{ id: "none", label: "Open" }, { id: "distance", label: "Distance" }, { id: "time", label: "Time" }]}
+                  value={goalType} onChange={saveGoalType} />
               </div>
               {goalType === "distance" && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="KM" val={goalDist} set={setGoalDistP} /></div>
+                <Cell icon="flag" iconColor={C.accent} title="Distance" value={<span className="num" style={{ color: C.text }}>{goalDist} km</span>} trailing={stepper("goal distance", setGoalDistP, 1, 1)} />
               )}
               {goalType === "time" && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}><StepCard label="GOAL" unit="MIN" val={goalTime} set={setGoalTimeP} /></div>
+                <Cell icon="clock" iconColor={C.yellow} title="Time" value={<span className="num" style={{ color: C.text }}>{goalTime} min</span>} trailing={stepper("goal time", setGoalTimeP, 1, 1)} />
               )}
-            </div>
+            </Group>
+
+            <Group header="You" footer="Weight is only used for the calorie estimate.">
+              <Cell icon="weight" iconColor={C.pink} title="Weight" value={<span className="num" style={{ color: C.text }}>{weightKg} kg</span>} trailing={stepper("weight", setWeight, 1, 30)} />
+            </Group>
+
             {hrSupported() && (
-              <div style={{ marginTop: 12 }}>
+              <Group header="Heart rate"
+                footer={<>Works with any Bluetooth heart-rate strap or band. <b style={{ color: C.text, fontWeight: 600 }}>Can't see your watch?</b> A scan only
+                  finds devices that are broadcasting, and a watch paired to this phone usually isn't — so it is listed from
+                  your paired devices instead. Tap it and Stride will tell you straight whether it can send a pulse. Samsung
+                  watches only can while an HR-broadcast app is running on the watch itself, and on the Tizen watches (Watch 3
+                  and older) those can no longer be installed.</>}>
                 {hr.status === "connected" ? (
-                  <Toggle on label={`${hr.deviceName}${hr.bpm ? ` · ${hr.bpm} bpm` : ""} — tap to disconnect`}
-                    onClick={() => { hr.disconnect(); haptic(6); }} />
+                  <Cell icon="heart" iconColor={C.warn} title={hr.deviceName} sub={hr.bpm ? `${hr.bpm} bpm · connected` : "Connected"}
+                    trailing={<button onClick={() => { hr.disconnect(); haptic(6); }} className="link" style={{ minHeight: 0 }}>Disconnect</button>} />
                 ) : (
-                  <Toggle on={false}
-                    label={hr.status === "connecting" ? "Connecting…"
+                  <Cell icon="heart" iconColor={C.warn}
+                    title={hr.status === "connecting" ? "Connecting…"
                       : hr.status === "reconnecting" ? "Reconnecting…"
-                      : hr.hasSavedDevice ? "Connect heart-rate monitor" : "Find a heart-rate monitor"}
-                    onClick={() => { hr.connect({ silent: hr.hasSavedDevice }); haptic(6); }} />
+                        : hr.hasSavedDevice ? "Connect heart-rate monitor" : "Find a heart-rate monitor"}
+                    chevron onClick={() => { hr.connect({ silent: hr.hasSavedDevice }); haptic(6); }} />
                 )}
                 {/* A remembered device connects with one tap; the picker has to
                     stay reachable for a second strap, or a wrong first pick. */}
                 {hr.status !== "connected" && hr.status !== "connecting" && hr.status !== "reconnecting" && (
-                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  <>
                     {hr.hasSavedDevice && (
-                      <button onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ silent: false }); haptic(6); }}
-                        style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
-                        Pick a different device
-                      </button>
+                      <Cell title="Pick a different device" accent style={{ "--inset": "60px", paddingLeft: 60 }}
+                        onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ silent: false }); haptic(6); }} />
                     )}
                     {/* A scan only ever sees devices that are ADVERTISING, and a
                         watch bonded to the phone has stopped advertising — which
                         is why dropping the service filter still found nothing.
                         Natively this lists the phone's paired devices too, so
                         the watch can be pointed at directly. */}
-                    <button onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ anyDevice: true }); haptic(6); }}
-                      style={{ background: "none", border: "none", color: C.dim, fontSize: 10.5, padding: "6px 0 0", cursor: "pointer", textDecoration: "underline" }}>
-                      {hr.canPickFromList ? "Show paired & nearby devices" : "Show every nearby device"}
-                    </button>
-                  </div>
+                    <Cell title={hr.canPickFromList ? "Show paired & nearby devices" : "Show every nearby device"} accent style={{ "--inset": "60px", paddingLeft: 60 }}
+                      onClick={() => { hr.canPickFromList ? hr.startScan({ anyDevice: true }) : hr.connect({ anyDevice: true }); haptic(6); }} />
+                  </>
                 )}
 
                 {/* The device list: paired first, because that is where a watch
                     actually lives. */}
                 {(hr.scanning || hr.devices.length > 0) && hr.status !== "connected" && (
-                  <div className="rise" style={{ marginTop: 10, background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <span style={{ fontSize: 10, letterSpacing: 1.6, fontWeight: 800, color: C.dim }}>
-                        {hr.scanning ? "LOOKING…" : "DEVICES"}
+                  <>
+                    <div className="cell rise" style={{ minHeight: 40, paddingTop: 8, paddingBottom: 8 }}>
+                      <span className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {hr.scanning ? "Looking" : "Devices"}
+                        {hr.scanning && (
+                          <span className="spin" style={{ width: 12, height: 12, borderRadius: "50%", border: `2px solid ${tint(C.accent, 0.25)}`, borderTopColor: C.accent }} />
+                        )}
                       </span>
-                      {hr.scanning && (
-                        <span className="spin" style={{
-                          width: 11, height: 11, borderRadius: "50%",
-                          border: `2px solid ${tint(C.accent, .25)}`, borderTopColor: C.accent,
-                        }} />
-                      )}
                       <button onClick={() => { hr.scanning ? hr.stopScan() : hr.startScan({ anyDevice: true }); haptic(5); }}
-                        style={{ marginLeft: "auto", background: "none", border: "none", color: C.accent, fontSize: 10.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        className="link" style={{ marginLeft: "auto", minHeight: 0 }}>
                         {hr.scanning ? "Stop" : "Scan again"}
                       </button>
                     </div>
-
                     {hr.devices.length === 0 ? (
-                      <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.55 }}>
+                      <div className="cell"><span className="cell-sub" style={{ fontSize: 15 }}>
                         Nothing yet. If your watch is paired to this phone it should appear here even
                         while it isn't broadcasting — if it doesn't, pair it in Android's Bluetooth
                         settings first.
-                      </div>
-                    ) : (
-                      <div style={{ display: "grid", gap: 6 }}>
-                        {hr.devices.map((d) => (
-                          <button key={d.id} onClick={() => { hr.connect({ deviceId: d.id, deviceName: d.name || "That device" }); haptic(8); }}
-                            style={{
-                              display: "flex", alignItems: "center", gap: 10, textAlign: "left", cursor: "pointer",
-                              background: C.surface, border: `1px solid ${C.line}`, borderRadius: 11,
-                              padding: "10px 12px", color: C.text, width: "100%",
-                            }}>
-                            <span style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ display: "block", fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {d.name || "Unnamed device"}
-                              </span>
-                              <span style={{ display: "block", fontSize: 10, color: C.dim2, marginTop: 2 }}>
-                                {d.source === "scan" ? `broadcasting now${d.rssi != null ? ` · ${d.rssi} dBm` : ""}`
-                                  : d.source === "connected" ? "connected to this phone"
-                                    : "paired to this phone"}
-                              </span>
-                            </span>
-                            <span style={{ fontSize: 10.5, fontWeight: 800, color: C.accent, flexShrink: 0 }}>Connect</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                      </span></div>
+                    ) : hr.devices.map((d) => (
+                      <Cell key={d.id} icon="watch" iconColor={C.gray} title={d.name || "Unnamed device"}
+                        sub={d.source === "scan" ? `Broadcasting now${d.rssi != null ? ` · ${d.rssi} dBm` : ""}`
+                          : d.source === "connected" ? "Connected to this phone" : "Paired to this phone"}
+                        trailing={<span className="t-sub" style={{ color: C.accent, fontWeight: 600, flexShrink: 0 }}>Connect</span>}
+                        onClick={() => { hr.connect({ deviceId: d.id, deviceName: d.name || "That device" }); haptic(8); }} />
+                    ))}
+                  </>
                 )}
 
                 {hr.error && (
-                  <div className="rise" onClick={hr.dismissError} style={{
-                    marginTop: 8, borderRadius: 10, padding: "9px 11px", fontSize: 11, lineHeight: 1.5,
-                    color: C.text, cursor: "pointer",
-                    background: tint(C.warn, .12), border: `1px solid ${tint(C.warn, .45)}`,
-                  }}>{hr.error}</div>
+                  <button className="cell rise" onClick={hr.dismissError} style={{ background: tint(C.warn, 0.12), alignItems: "flex-start" }}>
+                    <span style={{ color: C.warn, display: "flex", paddingTop: 1 }}><Icon name="info" size={18} /></span>
+                    <span className="cell-main"><span className="t-foot" style={{ color: C.text }}>{hr.error}</span></span>
+                  </button>
                 )}
-                <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
-                  Works with any Bluetooth heart-rate strap or band.{" "}
-                  <b style={{ color: C.dim }}>Can't see your watch?</b> A scan only finds devices
-                  that are broadcasting, and a watch paired to this phone usually isn't — so it is
-                  listed from your paired devices instead. Tap it and Stride will tell you straight
-                  whether it can send a pulse. Samsung watches only can while an HR-broadcast app is
-                  running on the watch itself, and on the Tizen watches (Watch 3 and older) those can
-                  no longer be installed.
+              </Group>
+            )}
+
+            {targetRoute && (
+              <Group header="Target route" footer="Drawn as a dashed guide on your run map.">
+                <div style={{ padding: "14px 14px 14px" }}>
+                  <div className="t-headline">{targetRoute.name} <span style={{ color: C.dim, fontWeight: 500 }}>· {targetRoute.km} km</span></div>
+                  <div style={{ marginTop: 12 }}><LiveMap points={[]} ghost={targetRoute.points} height={150} interactive={false} radius={14} /></div>
+                </div>
+              </Group>
+            )}
+
+            <div className="tracker-dock">
+              <button onClick={beginRun} className="cta tap"
+                style={{ width: "100%", borderRadius: 999, padding: "17px 0", fontSize: 19, display: "flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
+                <Icon name="play" size={19} /> Start
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TRACKING / PAUSED — Workout's display: time in yellow, distance huge */}
+        {tracking && (
+          <div className="rise tracker-body">
+            <div className="num" style={{ fontSize: 60, fontWeight: 600, color: C.yellow, lineHeight: 1, letterSpacing: "-.02em", opacity: t.status === "paused" ? 0.55 : 1 }}>{fmtTime(t.elapsedMs)}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8 }}>
+              <span className="num" style={{ fontSize: 84, fontWeight: 700, lineHeight: 0.95, color: C.accent, letterSpacing: "-.03em" }}>{km.toFixed(2)}</span>
+              <span className="num" style={{ fontSize: 28, fontWeight: 700, color: C.accent }}>KM</span>
+            </div>
+            <div style={{ minHeight: 30, marginTop: 10 }}>
+              {t.autoPaused && <span className="pill" style={{ background: tint(C.orange, 0.2), color: C.orange }}>Auto-paused · start moving</span>}
+              {t.status === "paused" && <span className="pill" style={{ background: "var(--fill3)", color: C.text }}>Paused</span>}
+            </div>
+
+            {goalActive && (
+              <div className="card" style={{ padding: "12px 14px", marginTop: 6, boxShadow: goalDone ? `inset 0 0 0 1px ${tint(C.accent, 0.5)}` : undefined }}>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+                  <span className="t-foot" style={{ fontWeight: 600, color: C.dim }}>Goal · {goalName}</span>
+                  <span className="num t-foot" style={{ marginLeft: "auto", fontWeight: 700, color: goalDone ? C.accent : C.text }}>{Math.round(goalPct * 100)}%</span>
+                </div>
+                <div className="bar" style={{ height: 8 }}><i style={{ width: `${goalPct * 100}%` }} /></div>
+                <div className="t-foot" style={{ color: goalDone ? C.accent : C.dim, fontWeight: 600, marginTop: 8 }}>{goalSub}</div>
+              </div>
+            )}
+
+            {phase && (
+              <div className="rise" key={phase} style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, borderRadius: 20, padding: "14px 16px", background: tint(phase === "RUN" ? C.accent : C.easy, 0.16) }}>
+                <span style={{ width: 44, height: 44, borderRadius: "50%", flexShrink: 0, background: phase === "RUN" ? C.accent : C.easy, color: C.onAccent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon name="run" size={24} weight={2.2} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="t-title3" style={{ color: phase === "RUN" ? C.accent : C.easy }}>{phase === "RUN" ? "Run now" : "Walk now"}</div>
+                  <div className="num t-foot" style={{ color: C.dim }}>{Math.floor(phaseLeft / 60)}:{String(phaseLeft % 60).padStart(2, "0")} left in this interval</div>
                 </div>
               </div>
             )}
-          </div>
-          {targetRoute && (
-            <div style={{ maxWidth: 320, width: "100%", margin: "0 auto", background: C.surface, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 10, textAlign: "left" }}>
-              <div style={{ fontSize: 9, color: C.accent, fontWeight: 800, letterSpacing: 1 }}>TARGET ROUTE</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{targetRoute.name} ({targetRoute.km} km)</div>
-              <LiveMap points={[]} ghost={targetRoute.points} height={140} interactive={false} />
-              <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Drawn as a dashed guide on your run map.</div>
+
+            <div className="card" style={{ padding: "4px 16px", marginTop: 14 }}>
+              <MetricGrid size={28} items={[
+                metric("Avg pace", fmtPace(avgPace), "/km", C.cyan),
+                metric("Pace now", fmtPace(curPace), "/km", C.cyan),
+                metric("Speed", speedNow ? speedNow.toFixed(1) : null, "km/h"),
+                { label: "Elevation", value: `+${Math.round(t.elevGainM)}`, unit: "m", color: C.good },
+                { label: "Energy", value: Math.round(kcal), unit: "kcal", color: C.pink },
+                cadenceOn && metric("Cadence", cad.cadence || null, "spm", C.purple),
+                cadenceOn && metric("Avg cadence", avgCadence || null, "spm"),
+                cadenceOn && metric("Steps", cad.steps || null),
+                hrLive && metric(hr.status === "reconnecting" ? "Heart rate · reconnecting" : "Heart rate", hr.bpm ?? null, "bpm", C.warn),
+                hrLive && metric("Avg heart rate", hrAvg || null, "bpm"),
+                hrLive && metric("Max heart rate", hrMax || null, "bpm"),
+              ]} />
             </div>
-          )}
-          <button onClick={beginRun} className="chip cta disp"
-            style={{ padding: "16px 0", fontSize: 16, fontWeight: 700, maxWidth: 280, margin: "8px auto 0", width: "100%", borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" /></svg>
-            Start run
-          </button>
-        </div>
-      )}
 
-      {/* TRACKING / PAUSED */}
-      {(t.status === "tracking" || t.status === "paused") && (
-        <div className="rise">
-          <div style={{ textAlign: "center", margin: "10px 0 6px" }}>
-            <div className="num gtext" style={{ fontSize: 66, fontWeight: 700, lineHeight: .95 }}>{km.toFixed(2)}</div>
-            <div style={{ fontSize: 10, letterSpacing: 2.4, color: C.dim, fontWeight: 800, marginTop: 8 }}>KILOMETRES</div>
-          </div>
-          <div style={{ height: 22, textAlign: "center", marginBottom: 10 }}>
-            {t.autoPaused && <span className="chip" style={{ background: C.warn, color: C.bg, border: "none", fontSize: 10 }}>AUTO-PAUSED · START MOVING</span>}
-            {t.status === "paused" && <span className="chip" style={{ background: C.surface2, color: C.dim, fontSize: 10 }}>PAUSED</span>}
-          </div>
+            <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-          {goalActive && (
-            <div className="card" style={{ borderRadius: 14, padding: "12px 14px", marginBottom: 14, borderColor: goalDone ? tint(C.accent, .5) : C.line }}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
-                <span style={{ fontSize: 10, letterSpacing: 1.5, color: C.dim, fontWeight: 700 }}>GOAL · {goalName}</span>
-                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: goalDone ? C.accent : C.text }}>{Math.round(goalPct * 100)}%</span>
-              </div>
-              <div className="bar" style={{ height: 7 }}><i style={{ width: `${goalPct * 100}%` }} /></div>
-              <div style={{ fontSize: 11, color: goalDone ? C.accent : C.dim, fontWeight: 600, marginTop: 7 }}>{goalSub}</div>
-            </div>
-          )}
-
-          {phase && (
-            <div className="rise" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, background: phase === "RUN" ? `${C.accent}1a` : `${C.easy}1a`, border: `1px solid ${phase === "RUN" ? C.accent : C.easy}`, borderRadius: 14, padding: "12px 14px", marginBottom: 14 }}>
-              <div style={{ textAlign: "center" }}>
-                <div className="disp" style={{ fontSize: 20, fontWeight: 700, color: phase === "RUN" ? C.accent : C.easy }}>{phase} NOW</div>
-                <div className="num" style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>{Math.floor(phaseLeft / 60)}:{String(phaseLeft % 60).padStart(2, "0")} left in this interval</div>
-              </div>
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            <Big label="TIME" value={fmtTime(t.elapsedMs)} />
-            <Big label="AVG PACE" value={fmtPace(avgPace)} />
-            <Big label="PACE NOW" value={fmtPace(curPace)} color={C.accent} />
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: cadenceOn || hrLive ? 10 : 18 }}>
-            <Big label="SPEED KM/H" value={speedNow ? speedNow.toFixed(1) : "--"} />
-            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
-            <Big label="KCAL" value={Math.round(kcal)} />
-          </div>
-          {cadenceOn && (
-            <div style={{ display: "flex", gap: 8, marginBottom: hrLive ? 10 : 18 }}>
-              <Big label="CADENCE SPM" value={cad.cadence || "--"} color={C.accent} />
-              <Big label="AVG SPM" value={avgCadence || "--"} />
-              <Big label="STEPS" value={cad.steps || "--"} />
-            </div>
-          )}
-          {hrLive && (
-            <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-              <Big label={hr.status === "reconnecting" ? "HR · RECONNECTING" : "HEART RATE"}
-                value={hr.bpm ?? "--"} color={C.warn} />
-              <Big label="AVG HR" value={hrAvg || "--"} />
-              <Big label="MAX HR" value={hrMax || "--"} />
-            </div>
-          )}
-
-          <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
-
-          <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={230} follow />
-
-          {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS / KM</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{i + 1}k · {fmtPace(s)}</span>))}
+              <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={240} follow radius={22} />
+            </div>
+
+            <SplitsTable splits={t.splits} />
+
+            <div className="tracker-dock" style={{ display: "flex", justifyContent: "center", gap: 56 }}>
+              <RoundControl label="End" color={C.warn} icon="xmark" onClick={() => { haptic(15); t.finish(); }} />
+              {t.status === "tracking"
+                ? <RoundControl label="Pause" color={C.yellow} icon="pause" onClick={() => { haptic(10); t.pause(); }} />
+                : <RoundControl label="Resume" color={C.good} icon="play" onClick={() => { haptic(10); t.resume(); }} />}
+            </div>
+          </div>
+        )}
+
+        {/* FINISHED */}
+        {t.status === "finished" && (
+          <div className="rise tracker-body">
+            <div className="card accented" style={{ padding: "16px 18px 8px", marginBottom: 14 }}>
+              <div className="t-foot" style={{ color: C.dim, fontWeight: 600 }}>
+                {new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
               </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 4, margin: "4px 0 8px" }}>
+                <span className="num gtext" style={{ fontSize: 66, fontWeight: 700, lineHeight: 1, letterSpacing: "-.03em" }}>{km.toFixed(2)}</span>
+                <span className="num" style={{ fontSize: 24, fontWeight: 700, color: C.accent }}>KM</span>
+              </div>
+              <MetricGrid size={26} items={[
+                { label: "Time", value: fmtTime(t.elapsedMs), color: C.yellow },
+                metric("Avg pace", fmtPace(avgPace), "/km", C.cyan),
+                { label: "Energy", value: Math.round(kcal), unit: "kcal", color: C.pink },
+                { label: "Elevation", value: `+${Math.round(t.elevGainM)}`, unit: "m", color: C.good },
+                metric("Top speed", t.maxSpeedMs ? (t.maxSpeedMs * 3.6).toFixed(1) : null, "km/h"),
+                hrAvg > 0 && { label: "Avg heart rate", value: hrAvg, unit: "bpm", color: C.warn },
+                hrAvg > 0 && { label: "Max heart rate", value: hrMax, unit: "bpm", color: C.warn },
+                avgCadence > 0 && { label: "Avg cadence", value: avgCadence, unit: "spm", color: C.purple },
+                avgCadence > 0 && { label: "Steps", value: cad.steps.toLocaleString() },
+              ]} />
             </div>
-          )}
 
-          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-            {t.status === "tracking" ? (
-              <button onClick={() => { haptic(10); t.pause(); }} className="chip tap" style={{ flex: 1, color: C.text, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Pause</button>
-            ) : (
-              <button onClick={() => { haptic(10); t.resume(); }} className="chip cta" style={{ flex: 1, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Resume</button>
-            )}
-            <button onClick={() => { haptic(15); t.finish(); }} className="chip tap" style={{ flex: 1, background: C.warn, color: C.bg, border: "none", padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Finish</button>
-          </div>
-        </div>
-      )}
+            <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
 
-      {/* FINISHED */}
-      {t.status === "finished" && (
-        <div className="rise">
-          <div style={{ display: "flex", marginBottom: 12 }}>
-            <Big label="DISTANCE" value={`${km.toFixed(2)}`} color={C.accent} />
-            <Big label="TIME" value={fmtTime(t.elapsedMs)} />
-            <Big label="AVG PACE" value={`${fmtPace(avgPace)}`} />
-          </div>
-          <div style={{ display: "flex", marginBottom: 16 }}>
-            <Big label="ELEV GAIN" value={`+${Math.round(t.elevGainM)}m`} />
-            <Big label="KCAL" value={Math.round(kcal)} />
-            <Big label="TOP SPEED" value={t.maxSpeedMs ? `${(t.maxSpeedMs * 3.6).toFixed(1)}` : "--"} />
-          </div>
-          {hrAvg > 0 && (
-            <div style={{ display: "flex", marginBottom: 16 }}>
-              <Big label="AVG HR" value={hrAvg} color={C.warn} />
-              <Big label="MAX HR" value={hrMax} />
-            </div>
-          )}
-          {avgCadence > 0 && (
-            <div style={{ display: "flex", marginBottom: 16 }}>
-              <Big label="AVG CADENCE" value={`${avgCadence}`} color={C.accent} />
-              <Big label="STEPS" value={cad.steps.toLocaleString()} />
-            </div>
-          )}
-
-          <PhaseBreakdown runM={t.phaseDist.run} walkM={t.phaseDist.walk} runSec={runTimeSec} walkSec={walkTimeSec} />
-
-          <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={220} />
-
-          {t.splits.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 8 }}>SPLITS / KM</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {t.splits.map((s, i) => (<span key={i} className="chip" style={{ background: C.surface, color: C.text }}>{i + 1}k · {fmtPace(s)}</span>))}
+              <LiveMap points={t.points} ghost={targetRoute && targetRoute.points} height={220} radius={22} />
+            </div>
+
+            <SplitsTable splits={t.splits} />
+
+            <Group header="Save to session" style={{ marginTop: 26 }}>
+              <div className="cell">
+                <select className="inp" value={dayKey} onChange={(e) => setDayKey(e.target.value)} aria-label="Session to save this run into"
+                  style={{ background: "transparent", padding: "4px 0", fontSize: 17 }}>
+                  {days.map((f) => (<option key={f.key} value={f.key}>Week {f.week} · {f.d.charAt(0) + f.d.slice(1).toLowerCase()} · {f.title}</option>))}
+                </select>
+              </div>
+            </Group>
+
+            <div className="tracker-dock" style={{ display: "grid", gap: 10 }}>
+              <button onClick={save} className="cta tap" style={{ width: "100%", borderRadius: 999, padding: "16px 0", fontSize: 18 }}>Save run</button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => {
+                  haptic(8);
+                  // Hand the run to the app's share sheet rather than firing a card
+                  // blind: the sheet previews it and offers every size and layout.
+                  onShare?.({
+                    km: Number(km.toFixed(2)), min: Number((t.elapsedMs / 60000).toFixed(1)), durMs: t.elapsedMs,
+                    route: downsample(t.points), splits: t.splits,
+                    elev: Math.round(t.elevGainM), kcal: Math.round(kcal),
+                    ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}),
+                    ...(hrAvg > 0 ? { hrAvg, hrMax } : {}),
+                    ...(avgCadence > 0 ? { cadence: avgCadence } : {}),
+                    date: new Date().toISOString(),
+                  });
+                }} className="btn" style={{ flex: 1, padding: "13px 0" }}>
+                  <Icon name="share" size={18} /> Share card
+                </button>
+                <button onClick={() => { haptic(8); t.reset(); }} className="btn danger" style={{ flex: 1, padding: "13px 0" }}>Discard</button>
               </div>
             </div>
-          )}
-
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: C.dim, fontWeight: 700, marginBottom: 6 }}>SAVE TO SESSION</div>
-            <select className="inp" value={dayKey} onChange={(e) => setDayKey(e.target.value)}>
-              {days.map((f) => (<option key={f.key} value={f.key}>W{f.week} · {f.d} · {f.title}</option>))}
-            </select>
           </div>
-
-          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-            <button onClick={() => { haptic(8); t.reset(); }} className="chip" style={{ padding: "15px 18px", fontSize: 15 }}>Discard</button>
-            <button onClick={save} className="chip cta" style={{ flex: 1, padding: "15px 0", fontSize: 15, fontWeight: 800, borderRadius: 999 }}>Save run</button>
-          </div>
-          <button onClick={() => {
-            haptic(8);
-            // Hand the run to the app's share sheet rather than firing a card
-            // blind: the sheet previews it and offers every size and layout.
-            onShare?.({
-              km: Number(km.toFixed(2)), min: Number((t.elapsedMs / 60000).toFixed(1)), durMs: t.elapsedMs,
-              route: downsample(t.points), splits: t.splits,
-              elev: Math.round(t.elevGainM), kcal: Math.round(kcal),
-              ...(runKm + walkKm > 0.02 ? { runKm: Number(runKm.toFixed(2)), walkKm: Number(walkKm.toFixed(2)) } : {}),
-              ...(hrAvg > 0 ? { hrAvg, hrMax } : {}),
-              ...(avgCadence > 0 ? { cadence: avgCadence } : {}),
-              date: new Date().toISOString(),
-            });
-          }} className="chip" style={{ width: "100%", marginTop: 10, padding: "13px 0", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3" /><circle cx="18" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4" /></svg>
-            Share run card
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

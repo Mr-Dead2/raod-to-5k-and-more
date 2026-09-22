@@ -30,8 +30,10 @@ export const STYLES = [
 
 export const formatById = (id) => FORMATS.find((f) => f.id === id) || FORMATS[0];
 
-const DISP = "'Space Grotesk', system-ui, sans-serif";
-const BODY = "'Manrope', system-ui, sans-serif";
+// The app's own type: SF (Rounded for figures, as Fitness shares them) on
+// Apple devices, the bundled Inter everywhere else.
+const DISP = "ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'Inter Variable', system-ui, sans-serif";
+const BODY = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Variable', system-ui, sans-serif";
 
 // --- formatting ------------------------------------------------------------
 
@@ -61,7 +63,7 @@ function rr(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// A soft radial wash of colour — the aurora light the app itself sits on.
+// A soft radial wash of colour — the still accent light behind the app's large titles.
 function glow(ctx, x, y, r, color, alpha) {
   const g = ctx.createRadialGradient(x, y, 0, x, y, r);
   g.addColorStop(0, tint(color, alpha));
@@ -113,7 +115,7 @@ function drawMark(ctx, x, y, size) {
   ctx.save();
   ctx.translate(x + size * 0.5 - 12 * u * 0.79, y + size * 0.5 - 12 * u * 0.79);
   ctx.scale(u * 0.79, u * 0.79);
-  ctx.strokeStyle = "#07080b";
+  ctx.strokeStyle = "#000";
   ctx.lineWidth = 2.7;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -222,7 +224,7 @@ function drawRoute(ctx, route, x, y, w, h, { pad = 26, width = 6, dots = true } 
 
   if (dots) {
     const s = pts[0], e = pts[pts.length - 1];
-    ctx.fillStyle = "#07080b";
+    ctx.fillStyle = "#000";
     ctx.strokeStyle = C.accent2;
     ctx.lineWidth = width * 0.55;
     ctx.beginPath(); ctx.arc(s.x, s.y, width * 1.25, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
@@ -288,17 +290,17 @@ function drawRing(ctx, cx, cy, r, pct, { width = 12 } = {}) {
 // --- shared chrome ---------------------------------------------------------
 
 function drawGround(ctx, W, H) {
-  const g = ctx.createLinearGradient(0, 0, W * 0.45, H);
-  g.addColorStop(0, "#0d1016");
-  g.addColorStop(0.55, "#090b10");
-  g.addColorStop(1, "#05060a");
+  // True black, as the app is — with the accent bleeding in from the top, the
+  // same still wash that sits behind every large title.
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#0b0b0c");
+  g.addColorStop(1, "#000000");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
   const big = Math.max(W, H);
-  glow(ctx, W * 0.08, -H * 0.02, big * 0.62, C.accent, 0.2);
-  glow(ctx, W * 1.02, H * 0.2, big * 0.5, C.accent2, 0.17);
-  glow(ctx, W * 0.25, H * 1.04, big * 0.55, C.accent2, 0.1);
+  glow(ctx, W * 0.12, -H * 0.04, big * 0.66, C.accent, 0.17);
+  glow(ctx, W * 1.02, H * 0.08, big * 0.48, C.accent2, 0.1);
 
   // a hairline inner frame keeps the card from bleeding into a dark feed
   ctx.strokeStyle = tint("#ffffff", 0.06);

@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App.jsx";
+import "@fontsource-variable/inter/opsz.css";
 import "./app.css";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { applyAccent, applyPlan } from "./data.js";
@@ -12,8 +13,11 @@ const _s = loadSettings();
 applyAccent(_s.accent);
 applyPlan(_s.customPlan);
 
-document.documentElement.style.background = "#07080b";
+document.documentElement.style.background = "#000";
 document.body.style.margin = "0";
+// iOS Safari only applies :active while a touch listener exists — and press
+// feedback on touch-down is the first thing that makes an app feel direct.
+document.addEventListener("touchstart", () => {}, { passive: true });
 
 // The service worker is a web-only concern, and actively harmful inside the
 // Android WebView: Capacitor serves the app from a fixed origin, so a worker

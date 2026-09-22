@@ -1,5 +1,6 @@
 // Small celebration helpers: haptic buzz + canvas confetti.
 import { isNative } from "./native.js";
+import { C } from "./data.js";
 
 // Vibrate. On the web/PWA this uses navigator.vibrate (Android Chrome). In the
 // native app it routes through Capacitor Haptics for a stronger, reliable buzz —
@@ -36,7 +37,7 @@ async function nativeHaptic(pattern) {
 export function confetti({ count = 90, spread = 1 } = {}) {
   if (typeof document === "undefined" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
-  const colors = ["#ccff33", "#43e0c4", "#ff6a3d", "#f1f3ee"];
+  const colors = [C.accent, C.accent2, C.cyan, C.pink, C.yellow, "#ffffff"];
   const canvas = document.createElement("canvas");
   Object.assign(canvas.style, {
     position: "fixed", inset: "0", width: "100%", height: "100%",
