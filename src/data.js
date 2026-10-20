@@ -86,6 +86,9 @@ export const C = {
 };
 export const typeColor = (t) => (t === "run" ? C.run : t === "easy" ? C.easy : C.rest);
 
+// 1–5 effort scale logged per run or workout (user content, like the badge emoji).
+export const FEELS = ["😖", "😕", "🙂", "😄", "🤩"];
+
 // Accents ship in pairs: the colour and a deeper tone of the same hue, so a
 // gradient reads like an Activity ring rather than a rainbow.
 export const ACCENTS = [

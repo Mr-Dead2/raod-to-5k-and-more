@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Stride** — an installable **PWA** (Progressive Web App) run tracker built with
-**React + Vite** and `vite-plugin-pwa`. It runs in the browser, installs to a
+**Stride** — an installable **PWA** (Progressive Web App) run tracker, with gym
+plans alongside, built with **React + Vite** and `vite-plugin-pwa`. It runs in the browser, installs to a
 phone home screen, works offline, and shows reminder and in-run notifications.
 It started life as a single Claude-artifact JSX file for a 4-week "Road to 5K"
 plan; that goal has been met, so the app was renamed and now aims at whatever
@@ -143,8 +143,9 @@ front — the other headline reason to go native.
   and the first two system colours that stay clear of it in hue, whichever accent
   is picked. `tint(hex, alpha)` turns any token into an `rgba()` string — use it
   instead of appending hex alpha suffixes.
-- **`src/App.jsx` — one stateful component, four tabs (`plan | stats | coach |
-  history`).** The shell is iOS navigation, not page content. Each tab opens
+- **`src/App.jsx` — one stateful component, five tabs (`plan | gym | stats |
+  coach | history`).** The Gym tab is its own component (see **The gym** below);
+  App only wires it up. The shell is iOS navigation, not page content. Each tab opens
   with `<Screen eyebrow title sub trailing />`: today's date in small caps, a
   34 px large title, a line of context, and on the right the app-wide controls
   (`appControls(size)`: a glass share button and the plan-progress ring, which
@@ -189,7 +190,8 @@ front — the other headline reason to go native.
   error) and `loadReminder()` caches for 5 s: the live-run notice reads the
   reminder four times a second for a whole run, and a fresh `indexedDB.open()`
   per read leaked thousands of handles. `saveReminder()` always merges onto a
-  fresh read, never the cache, so the SW's `lastFired` writes survive.
+  fresh read, never the cache, so the SW's `lastFired` writes survive. The gym
+  has its own keys (see **The gym**): `run5k:gym:v1` and `run5k:gym:active`.
 - **Notifications (`src/notifications.js` + `src/sw.js` + `src/native.js`).** No
   backend/push server. The **daily reminder** has three best-effort layers: (1)
   Notification permission + the SW to show notices; (2) Periodic Background Sync
@@ -326,6 +328,65 @@ front — the other headline reason to go native.
   (`coachRun()`, transient `runFeedback` state); and finishing the plan surfaces a
   "Build my next block" CTA on the Plan tab. No live alarm — best-effort, and the
   user can edit the model string when Groq's free model line-up changes.
+- **The gym (`src/gym.js`, `src/useGym.js`, `src/components/GymTab.jsx`,
+  `WorkoutPlayer.jsx`, `GymParts.jsx`, `BodyMap.jsx`, `Sheet.jsx`).** For someone
+  who walks into a gym and doesn't know what to do. `gym.js` is pure (keep it
+  that way, like `goals.js`): `EXERCISES` is a 43-move library, each with
+  plain-language `steps`, one `tip`, `primary`/`secondary` muscles (ids match
+  `MUSCLES` and `BodyMap`), `equip` and `alts`; `kind` is what gets logged —
+  `"weight"` (kg × reps), `"reps"` or `"time"` (a hold) — `perSide` marks
+  one-side-at-a-time moves and `optionalLoad` a weight move that's fine
+  unloaded. `PROGRAMS` are six ready-made plans whose workouts **rotate** (A, B,
+  A…, one per visit) rather than sit on a calendar, so "what do I do today?"
+  always has an answer: `nextWorkout()` is the one after the last session done
+  in this plan (`planSessions()`). `suggestion()` is double progression — stay
+  at a weight until every set hits the top of the rep range, then step up ~5%
+  rounded to the kit's increment (`INC`) — and is what the player pre-fills.
+  A workout in progress is a **draft** (`buildDraft`), saved to
+  `run5k:gym:active` after every change so a minimised player, a killed app or
+  a flat battery loses nothing; `draftToSession()` keeps only completed sets and
+  dates the session by its last set, not by when Save was tapped. Logged
+  sessions live in `run5k:gym:v1`, newest first; the chosen plan is the
+  settings key `gymPlan` (`{ id, startedAt, basedOn?, program? }` — `program`
+  only for an AI-written plan, re-validated on load). **Tabs inside the tab**
+  are a `Segmented`: Today (the next workout with every exercise and the weight
+  to use), Plans (the AI builder + plan cards), Exercises (the library) and Log
+  (totals, best sets, a card per session). **The player** (`WorkoutPlayer`)
+  is a `.tracker` cover mounted by App, outside `.page` (a stacking context the
+  tab bar would otherwise sit above). Its happy path is one big button — "Done ·
+  set 1 of 3" logs the set with whatever the placeholders offer (typed values
+  win; the weight carries forward from the previous set), starts the rest
+  timer, and after an exercise's last set moves on to the next. A loaded
+  exercise with no weight asks for one instead of logging 0 kg. Timed holds get
+  a 3-2-1 and a countdown that ticks the set off itself. **Rest and holds are
+  timestamps, not counters**, so a phone that slept mid-rest comes back showing
+  the right time; a hold that ended more than a minute before the app came back
+  is cleared, not logged. The last three seconds beep, then a buzz, a tone and a
+  spoken line (`cues.js`, muted with the speaker button, setting `gymSound`);
+  the screen is held awake; and only when the page is hidden does
+  `notifyRestOver()` post a notification (its own `gymRest` switch). Swapping is
+  only allowed before an exercise's first set, so one log row never mixes two
+  exercises. **The AI** reuses the coach's key and model: `generateGymPlan` /
+  `tweakGymPlan` are JSON-mode calls whose reply goes through
+  `normalizeGymPlan()`, which resolves every exercise against the library (by id,
+  name or `aka`, longest match) and **drops** anything it can't — a move with no
+  instructions defeats the point — clamps every number, and computes the
+  per-workout minutes from the exercises rather than trusting the model. A
+  rewrite of the current plan keeps its progress: `startPlan(p, { keepProgress })`
+  carries `startedAt` and sets `basedOn`, which `planSessions()` also counts.
+  `coachWorkout` reviews a logged session and `askAboutExercise` answers the
+  in-player chips (machine taken, weight, form, pain) inline. The coach summary
+  gains a `gym` block (`gymSummary`) and the persona a strength paragraph **only
+  when there is gym data**; the Gym tab's question chips (`gymAsks`) land in the
+  one Coach conversation via App's `askCoachFrom`. Backups carry `gym` (the
+  session list, merged by id on import) and the plan in `settings`. Three
+  badges (First Lift, Gym Regular, Ton Up) read `gymWorkouts`/`gymMaxVolume`,
+  which App merges into the achievements context. `Sheet.jsx` is the generic
+  bottom sheet (the share sheet's spring physics, portaled to `body`, stackable,
+  Escape closes only the top one; `children`/`footer` may be functions of
+  `{ dismiss }` so an action can leave with the exit animation).
+  `BodyMap.jsx` draws the stylised front/back figure from left-half shapes
+  mirrored, main muscles in the accent and helpers in a wash of it.
 - **Race goals (`src/goals.js`).** The target that replaced "get to 5K". `RACES`
   is the catalogue (1K/5K/10K/half/marathon); `riegel()` converts a known
   performance to an equivalent finish time at another distance (T2 = T1 ×
@@ -601,7 +662,8 @@ front — the other headline reason to go native.
   destroys the focused element. The symptom was that every text field in the app
   (the coach's question box, the Groq key, a session's distance) accepted exactly
   one character before the input was torn out from under the caret. Never define
-  a component that wraps an input inside another component's body.
+  a component that wraps an input inside another component's body — the workout
+  player's `SetRow` and `ExercisePanel` are module-scope for exactly this reason.
 - **Controls attached to growing content move under the thumb.** The coach's
   Stop button lives in the composer, not under the streaming bubble: attached to
   the bubble it slid down the screen with every token. Autoscroll follows the
@@ -641,7 +703,11 @@ front — the other headline reason to go native.
   `.tinted`, `.danger`), `.link` (text button in the accent), `.chip`/`.chip.on`
   (filters and toggles), `.glass`/`.glass-btn`, `.inp`, `.lab` (small caps field
   label), `.pill`/`.tag`, `.bubble.me/.them` + `.composer` (Messages),
-  `.hscroll`, `.sheet`/`.close-btn`, `.tracker`/`.tracker-dock`, `.rm-*`.
+  `.hscroll`, `.sheet`/`.close-btn`/`.sheet-foot`, `.tracker`/`.tracker-dock`, `.rm-*`,
+  and for the gym `.prog-card`, `.meta`/`.meta-row`, `.steps`, `.tip`,
+  `.search`, `.gym-ex-row`, `.gp-*` (the player: strip chips, set rows, inputs,
+  ticks) and `.rest-dock`/`.rest-btn`. A grouped list inside a sheet sits on
+  `surface2` (`.sheet .grp-body`), one step lighter than the sheet, as iOS does.
 - **Type: Apple's text styles.** `.t-large` (34), `.t-title1/2/3` (28/22/20),
   `.t-headline`/`.t-body` (17), `.t-callout` (16), `.t-sub` (15), `.t-foot` (13),
   `.t-cap`/`.t-cap2` (12/11). Tracking is size-specific — negative as type grows,

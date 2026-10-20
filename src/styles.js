@@ -303,6 +303,65 @@ export const appCss = () => `
     box-shadow:0 3px 8px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.06); transition:transform .15s ease-out; }
   .scrub.dragging .scrub-thumb { transform:scale(1.12); }
 
+  /* ---- gym: plans, the exercise library, how-to ---- */
+  .meta-row { display:flex; flex-wrap:wrap; gap:6px; }
+  .meta { display:inline-flex; align-items:center; gap:5px; font-size:13px; font-weight:600; color:${C.dim}; background:var(--fill4); padding:5px 10px; border-radius:999px; white-space:nowrap; }
+  .prog-card { display:block; width:100%; text-align:left; border:none; cursor:pointer; color:${C.text}; padding:16px; margin-bottom:12px; font:inherit; }
+  .prog-card:active { transform:scale(.985) !important; }
+  .gym-ex-row { display:flex; align-items:center; gap:12px; width:100%; min-height:54px !important; padding:9px 0; background:none; border:none; border-top:.5px solid var(--sep);
+    color:${C.text}; text-align:left; cursor:pointer; font:inherit; }
+  .gym-ex-row:active { opacity:.55; transform:none !important; }
+  .gym-n { width:26px; height:26px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:var(--fill3); font-size:13px; font-weight:700; }
+  .steps { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+  .steps li { display:flex; gap:12px; align-items:flex-start; font-size:16px; line-height:1.42; letter-spacing:-.011em; }
+  .steps li > b { width:26px; height:26px; border-radius:50%; flex-shrink:0; margin-top:-1px; display:flex; align-items:center; justify-content:center;
+    background:${tint(C.accent, 0.16)}; color:${C.accent}; font-family:var(--font-round); font-size:13px; font-weight:700; }
+  .tip { display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:16px; background:${tint(C.yellow, 0.1)}; color:${C.text}; font-size:15px; line-height:1.4; }
+  .tip > span:first-child { display:flex; padding-top:1px; color:${C.yellow}; flex-shrink:0; }
+  .search { display:flex; align-items:center; gap:8px; padding:0 8px 0 12px; border-radius:12px; background:var(--fill3); color:${C.dim}; }
+  .search input { flex:1; min-width:0; min-height:42px; padding:9px 0; background:none; border:none; outline:none; color:${C.text}; font-size:17px; letter-spacing:-.014em; }
+  .search input::placeholder { color:var(--label3); }
+  .sheet .grp-body { background:${C.surface2}; }
+  .clamp2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.25; }
+  .sheet-foot { flex-shrink:0; padding:12px 20px calc(12px + env(safe-area-inset-bottom)); border-top:.5px solid var(--sep); background:${C.surface}; }
+
+  /* ---- gym: the workout player ---- */
+  .gp-head { display:flex; align-items:center; gap:10px; margin-bottom:14px; min-height:44px; }
+  .gp-strip { margin:0 -16px 14px; padding:0 16px; scroll-padding:0 16px; }
+  .gp-chip { display:inline-flex; align-items:center; gap:7px; flex-shrink:0; max-width:190px; min-height:36px !important; padding:6px 13px 6px 7px; border:none; border-radius:999px;
+    background:var(--fill3); color:${C.text}; font-size:14px; font-weight:600; cursor:pointer; transition:background-color .2s ease, color .2s ease; }
+  .gp-chip > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gp-chip > i { width:22px; height:22px; border-radius:50%; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center;
+    font-style:normal; font-size:12px; font-weight:700; background:var(--fill); font-family:var(--font-round); }
+  .gp-chip.on { background:${tint(C.accent, 0.16)}; color:${C.accent}; box-shadow:inset 0 0 0 1px ${tint(C.accent, 0.5)}; }
+  .gp-chip.on > i { background:${C.accent}; color:${C.onAccent}; }
+  .gp-chip.done:not(.on) { color:${C.dim}; }
+  .gp-chip.done > i { background:${C.good}; color:${C.onAccent}; }
+  .gp-hint { display:flex; gap:9px; align-items:flex-start; margin-top:14px; padding:11px 13px; border-radius:14px; font-size:15px; line-height:1.38; color:${C.text}; }
+  .gp-set { display:grid; grid-template-columns:30px minmax(0,1fr) minmax(0,1fr) 44px; gap:10px; align-items:center; padding:7px 0; }
+  .gp-set + .gp-set { border-top:.5px solid var(--sep); }
+  .gp-set-head { padding:9px 0 3px; font-size:12px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:${C.dim}; }
+  .gp-set-head + .gp-set { border-top:none; }
+  .gp-set-n { text-align:center; font-size:16px; font-weight:700; color:${C.dim}; }
+  .gp-set.next .gp-set-n { color:${C.accent}; }
+  .gp-inp { width:100%; min-width:0; height:46px; min-height:46px; padding:0 6px; border:1px solid transparent; border-radius:12px; background:var(--fill3);
+    color:${C.text}; text-align:center; font-size:20px; font-weight:600; outline:none; transition:border-color .15s ease, box-shadow .15s ease, background-color .2s ease; }
+  .gp-inp::placeholder { color:var(--label3); font-weight:500; }
+  .gp-inp:focus { border-color:${tint(C.accent, 0.75)}; box-shadow:0 0 0 3px ${tint(C.accent, 0.16)}; }
+  .gp-inp.need { border-color:${C.warn}; box-shadow:0 0 0 3px ${tint(C.warn, 0.2)}; }
+  .gp-set.done .gp-inp { background:transparent; color:${C.good}; }
+  .gp-tick { width:44px; height:44px; min-height:44px !important; padding:0; border-radius:50%; border:2px solid ${C.gray}; background:transparent; color:transparent; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; transition:background-color .2s ease, border-color .2s ease, color .2s ease; }
+  .gp-set.next .gp-tick { border-color:${C.accent}; color:${tint(C.accent, 0.35)}; }
+  .gp-tick.on { background:${C.good}; border-color:${C.good} !important; color:${C.onAccent} !important; }
+  .rest-dock { display:flex; align-items:center; gap:10px; padding:10px 10px 10px 10px; border-radius:28px; }
+  .rest-dock.over { background:linear-gradient(180deg, ${tint(C.accent, 0.24)}, ${tint(C.accent, 0.14)}) !important; border-color:${tint(C.accent, 0.5)} !important; }
+  .rest-btn { min-width:44px; height:40px; min-height:40px !important; padding:0 10px; flex-shrink:0; border:none; border-radius:999px; cursor:pointer;
+    background:var(--fill3); color:${C.text}; font-family:var(--font-round); font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .rest-btn.skip { background:${tint(C.yellow, 0.2)}; color:${C.yellow}; padding:0 14px; }
+  .rest-dock.over .rest-btn.skip { background:${C.accent}; color:${C.onAccent}; }
+  @media (max-width: 360px) { .rest-btn { min-width:40px; padding:0 7px; font-size:14px; } .rest-dock { gap:7px; } }
+
   /* ---- metric grid (a workout summary) ---- */
   .mgrid { display:grid; column-gap:16px; }
   .mcell { padding:11px 0; border-top:.5px solid rgba(84,84,88,.75); min-width:0; }

@@ -25,6 +25,7 @@ export const DEFAULT_REMINDER = {
   runFinish: true,   // run saved / finished
   runLive: true,     // ongoing "run in progress" notification
   milestone: true,   // achievements + goal milestones
+  gymRest: true,     // gym: rest between sets is over
 };
 
 // Rotating nudges so the daily reminder never reads like the same robot.
@@ -280,6 +281,14 @@ export async function notifyMilestone(title, body) {
   return transient(title, body, "stride-milestone");
 }
 
+// Gym: the rest between sets is over. Only sent while the app is out of sight —
+// on screen, the player's own beep, buzz and voice already said so.
+export async function notifyRestOver(label) {
+  const r = await loadReminder();
+  if (r.gymRest === false) return false;
+  return transient("Stride · rest over", label, "stride-rest");
+}
+
 // "Send me one now" button in settings, so the user can prove it works.
 export async function sendTestNotification() {
   if (!(await ensureNotificationPermission())) return false;
@@ -295,6 +304,13 @@ export async function primeRunNotifications() {
   const r = await loadReminder();
   const wanted = r.runLive !== false || r.runKm !== false || r.runInterval !== false || r.runFinish !== false;
   if (!wanted) return false;
+  return ensureNotificationPermission();
+}
+
+// Called when a gym workout opens — the same rule as runs: never awaited.
+export async function primeGymNotifications() {
+  const r = await loadReminder();
+  if (r.gymRest === false) return false;
   return ensureNotificationPermission();
 }
 

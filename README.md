@@ -25,7 +25,15 @@ to your phone like a normal app and works offline.
   distance, a day-by-day calendar, personal records and achievements.
 - **History**: every session with distance, time, pace, route thumbnail, splits
   and a replay.
-- **AI coach** (optional, your own free Groq key) for analysis and new plan blocks.
+- **Gym plans** for people who don't know what to do in a gym: six ready-made
+  plans (a machines-first beginner plan, dumbbells only, runner's strength, no
+  equipment, upper/lower, push/pull/legs), 43 exercises each explained in plain
+  steps with a muscle map, and a guided workout that shows one exercise at a
+  time, logs your sets, times your rest and tells you when to go heavier.
+- **AI coach** (optional, your own free Groq key) for analysis and new plan blocks —
+  and for the gym: it writes a gym plan from five quick answers, rewrites yours
+  on request ("only 30 minutes", "easy on my knees"), reviews a workout, and
+  answers questions mid-set ("the machine's taken", "is my weight right?").
 - **Six accent themes**, and an installable PWA: add to your home screen, works
   offline, your data stays on your phone.
 

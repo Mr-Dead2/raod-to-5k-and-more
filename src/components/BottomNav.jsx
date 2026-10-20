@@ -14,6 +14,14 @@ const ICONS = {
       <><path d="M7.1 4.5h9.8a3.6 3.6 0 0 1 3.6 3.6v1.3h-17V8.1a3.6 3.6 0 0 1 3.6-3.6Z" fill="currentColor" /><path d="M3.5 10.4h17v6.5a3.6 3.6 0 0 1-3.6 3.6H7.1a3.6 3.6 0 0 1-3.6-3.6Z" fill="currentColor" /><path d="M8 2.8v3.4M16 2.8v3.4" /><path d="m9.2 14.9 2 2 3.8-3.9" stroke={C.onAccent} /></>
     ),
   },
+  gym: {
+    line: (
+      <><rect x="2.3" y="9.3" width="2.9" height="5.4" rx="1.1" /><rect x="5.2" y="6.4" width="3.7" height="11.2" rx="1.5" /><path d="M8.9 12h6.2" /><rect x="15.1" y="6.4" width="3.7" height="11.2" rx="1.5" /><rect x="18.8" y="9.3" width="2.9" height="5.4" rx="1.1" /></>
+    ),
+    fill: (
+      <><g fill="currentColor"><rect x="2.3" y="9.3" width="2.9" height="5.4" rx="1.1" /><rect x="5.2" y="6.4" width="3.7" height="11.2" rx="1.5" /><rect x="15.1" y="6.4" width="3.7" height="11.2" rx="1.5" /><rect x="18.8" y="9.3" width="2.9" height="5.4" rx="1.1" /></g><path d="M8.9 12h6.2" strokeWidth="2.4" /></>
+    ),
+  },
   stats: {
     line: (
       <><rect x="3.6" y="12.2" width="4.4" height="8.3" rx="1.5" /><rect x="9.8" y="7.4" width="4.4" height="13.1" rx="1.5" /><rect x="16" y="3.5" width="4.4" height="17" rx="1.5" /></>
@@ -42,6 +50,7 @@ const ICONS = {
 
 const ITEMS = [
   { id: "plan", label: "Plan" },
+  { id: "gym", label: "Gym" },
   { id: "stats", label: "Stats" },
   { id: "coach", label: "Coach" },
   { id: "history", label: "History" },
