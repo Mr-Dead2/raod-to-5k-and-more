@@ -49,6 +49,7 @@ const ICON_PATHS = {
   copy: <><rect x="8.6" y="8.6" width="11.8" height="11.8" rx="2.6" /><path d="M15.4 8.6V6.2a2.6 2.6 0 0 0-2.6-2.6H6.2a2.6 2.6 0 0 0-2.6 2.6v6.6a2.6 2.6 0 0 0 2.6 2.6h2.4" /></>,
   text: <path d="M4.6 6.6h14.8M4.6 12h14.8M4.6 17.4h9" />,
   speaker: <><path d="M4 9.4v5.2h3.6l4.6 4V5.4L7.6 9.4Z" /><path d="M15.6 9a4.2 4.2 0 0 1 0 6M18.4 6.4a7.8 7.8 0 0 1 0 11.2" /></>,
+  mute: <><path d="M4 9.4v5.2h3.6l4.6 4V5.4L7.6 9.4Z" /><path d="m15.8 9.6 4.8 4.8M20.6 9.6l-4.8 4.8" /></>,
   repeat: <><path d="M4.6 11.2a5.4 5.4 0 0 1 5.4-5.4h8.6" /><path d="m15.6 2.8 3 3-3 3" /><path d="M19.4 12.8a5.4 5.4 0 0 1-5.4 5.4H5.4" /><path d="m8.4 21.2-3-3 3-3" /></>,
   pauseCircle: <><circle cx="12" cy="12" r="8.6" /><path d="M10 9.2v5.6M14 9.2v5.6" /></>,
   weight: <path d="M6.4 8v8M17.6 8v8M3.8 10.2v3.6M20.2 10.2v3.6M6.4 12h11.2" />,
@@ -65,6 +66,18 @@ const ICON_PATHS = {
   moon: <path d="M19.6 14.6A7.9 7.9 0 0 1 9.4 4.4a7.9 7.9 0 1 0 10.2 10.2Z" />,
   run: <><circle cx="15.2" cy="4.6" r="1.9" fill="currentColor" stroke="none" /><path d="m13.4 8.4-3.6 2.2-3.2.4M13.4 8.4l2.4 3.4 3 1M13.4 8.4l-1.2 5 3.2 3.2v3.8M12.2 13.4l-2.4 3.5-4 .9" /></>,
   gauge: <><path d="M4.4 16.6a7.6 7.6 0 1 1 15.2 0" /><path d="m12 16.6 3.6-4.6" /></>,
+  // the gym: kit, and the things a workout needs
+  dumbbell: <><rect x="2.4" y="9.3" width="2.8" height="5.4" rx="1.1" /><rect x="5.2" y="6.6" width="3.6" height="10.8" rx="1.5" /><path d="M8.8 12h6.4" /><rect x="15.2" y="6.6" width="3.6" height="10.8" rx="1.5" /><rect x="18.8" y="9.3" width="2.8" height="5.4" rx="1.1" /></>,
+  barbell: <><path d="M1.6 12h2.6M9.4 12h5.2M19.8 12h2.6" /><rect x="4.2" y="6" width="3" height="12" rx="1.2" /><rect x="7.2" y="8" width="2.2" height="8" rx="1" /><rect x="16.8" y="6" width="3" height="12" rx="1.2" /><rect x="14.6" y="8" width="2.2" height="8" rx="1" /></>,
+  machine: <><circle cx="12" cy="4.2" r="1.7" /><path d="M12 5.9V9" /><rect x="6" y="9" width="12" height="11.4" rx="2.2" /><path d="M6 12.8h12M6 16.6h12" /></>,
+  cable: <><circle cx="12" cy="4.6" r="2.2" /><path d="M12 6.8V14" /><path d="M7.8 14h8.4l-1.4 5.8H9.2Z" /></>,
+  body: <><circle cx="12" cy="4.6" r="2.1" /><path d="M5 9.4h14M12 9.4v5.6" /><path d="m12 15-3.6 5.6M12 15l3.6 5.6" /></>,
+  swap: <><path d="M5 8.2h13.6" /><path d="m15 4.6 3.6 3.6-3.6 3.6" /><path d="M19 15.8H5.4" /><path d="m9 12.2-3.6 3.6L9 19.4" /></>,
+  list: <><path d="M9.2 6.4h10.4M9.2 12h10.4M9.2 17.6h10.4" /><circle cx="5" cy="6.4" r="1.25" fill="currentColor" stroke="none" /><circle cx="5" cy="12" r="1.25" fill="currentColor" stroke="none" /><circle cx="5" cy="17.6" r="1.25" fill="currentColor" stroke="none" /></>,
+  timer: <><path d="M6.6 3.4h10.8M6.6 20.6h10.8" /><path d="M8 3.4c0 4.6 4 5.4 4 8.6s-4 4-4 8.6M16 3.4c0 4.6-4 5.4-4 8.6s4 4 4 8.6" /></>,
+  trophy: <><path d="M8 3.8h8v5.4a4 4 0 0 1-8 0Z" /><path d="M8 5.4H5.4a2.6 2.6 0 0 0 2.8 4M16 5.4h2.6a2.6 2.6 0 0 1-2.8 4" /><path d="M12 13.2v3.4M9.4 16.6h5.2v3.6H9.4Z" /></>,
+  search: <><circle cx="10.8" cy="10.8" r="6.6" /><path d="m15.6 15.6 4.8 4.8" /></>,
+  bulb: <><path d="M9.4 17.6h5.2M10.2 20.6h3.6" /><path d="M8.6 14.8a6 6 0 1 1 6.8 0c-.8.6-1.2 1.5-1.2 2.4H9.8c0-.9-.4-1.8-1.2-2.4Z" /></>,
 };
 
 export const Icon = ({ name, size = 18, weight = 1.9, style }) => (

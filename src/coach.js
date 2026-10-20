@@ -5,6 +5,7 @@
 // settings, on-device only) and the request goes straight from the browser to
 // api.groq.com. Free, fast, and private to the user's device.
 import { TOTAL } from "./data.js";
+import { libraryForPrompt, programForPrompt } from "./gym.js";
 
 export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 export const DEFAULT_MODEL = "llama-3.3-70b-versatile";
@@ -26,7 +27,7 @@ const mins = (m) => (m ? `${Math.round(m)} min` : "—");
 
 // Build a compact, model-friendly snapshot of everything the app knows about
 // the runner: totals, consistency, weekly volume, and the most recent sessions.
-export function buildSummary({ stats, weekly, history, goal, race, plan }) {
+export function buildSummary({ stats, weekly, history, goal, race, plan, gym }) {
   const recent = history
     .filter((h) => parseFloat(h.e.km) > 0)
     .slice(0, 10)
@@ -94,6 +95,8 @@ export function buildSummary({ stats, weekly, history, goal, race, plan }) {
     sessionFeedback: history
       .filter((h) => h.e.cal)
       .map((h) => ({ session: `${h.title}`, felt: h.e.cal })),
+    // the gym plan, next workout, recent lifts and best sets (gym.js gymSummary)
+    ...(gym ? { gym } : null),
   };
 }
 
@@ -109,8 +112,17 @@ const PERSONA = [
   "longer when explicitly asked for a full plan (then use day-by-day '- ' bullets).",
 ].join("\n");
 
+// Only said when there is gym data: a runner who never lifts shouldn't be
+// steered towards a barbell.
+const STRENGTH = [
+  "They also lift weights: `gym` in the data holds their gym plan, next workout,",
+  "recent sessions and best sets. Coach strength training as an expert too —",
+  "technique in plain words, sets, reps and weights based on their logged numbers,",
+  "and how lifting fits around running (no heavy legs the day before a long run).",
+].join("\n");
+
 const systemFor = (summary) =>
-  `${PERSONA}\n\nThe runner's current training data (JSON):\n${JSON.stringify(summary)}`;
+  `${PERSONA}${summary && summary.gym ? `\n\n${STRENGTH}` : ""}\n\nThe runner's current training data (JSON):\n${JSON.stringify(summary)}`;
 
 // First-touch analysis prompt (used by the "Analyse my training" button).
 export const ANALYSE_PROMPT =
@@ -123,7 +135,7 @@ export const ANALYSE_PROMPT =
 // than fixed: offering "why do I get stitches?" to someone who has never logged
 // one, or "ready for 5K?" to someone who has run three, is the chip equivalent
 // of generic advice.
-export function quickAsks({ stats, race, raceDays, todaySession } = {}) {
+export function quickAsks({ stats, race, raceDays, todaySession, gymNext } = {}) {
   const asks = [];
 
   if (todaySession) {
@@ -133,6 +145,14 @@ export function quickAsks({ stats, race, raceDays, todaySession } = {}) {
         ? `My plan says rest today (${todaySession.title}). Given how my last few runs went, should I actually rest, or do something light?`
         : `My plan today is "${todaySession.title} — ${todaySession.detail}". How should I run it, and what should I watch for?`,
     });
+  }
+
+  if (gymNext) {
+    asks.push({
+      label: "Next gym workout",
+      text: `My next gym workout is "${gymNext.name}". How should I approach it today, and what weights should I aim for?`,
+    });
+    asks.push({ label: "Gym + running", text: "How should I fit my gym workouts around my runs this week so neither suffers?" });
   }
 
   asks.push({ label: "How's my pacing?", text: "How is my pacing across recent runs? Am I going out too fast or too slow?" });
@@ -432,6 +452,156 @@ export function coachRun({ apiKey, model, summary, run, signal }) {
       "tip. Under 110 words, plain text. The run:",
       JSON.stringify(run),
     ].join("\n"),
+  }];
+  return askCoach({ apiKey, model, summary, messages, signal });
+}
+
+// ---------------------------------------------------------------------------
+// The gym. The same coach, a second subject: build a plan from a few answers,
+// change one on request, review a workout, and answer a question mid-set.
+// ---------------------------------------------------------------------------
+
+// One-tap questions for the Gym tab — what someone new to lifting actually
+// wonders, plus the plan's own next workout when there is one.
+export function gymAsks({ next, hasSessions } = {}) {
+  const asks = [];
+  if (next) {
+    asks.push({
+      label: `Walk me through ${next.name}`,
+      text: `My next gym workout is "${next.name}". Walk me through it like I'm new to the gym: what to do first, how heavy to go, and what to watch for on each exercise.`,
+    });
+  }
+  asks.push({ label: "What weight do I use?", text: "How do I pick the right weight for each exercise when I don't know where to start?" });
+  if (hasSessions) asks.push({ label: "Am I progressing?", text: "Look at my recent gym workouts. Am I progressing, and what should I change?" });
+  asks.push({ label: "Sore — train or rest?", text: "I'm sore from my last gym workout. Should I train today, rest, or do something light?" });
+  asks.push({ label: "Gym + running", text: "How should I fit my gym workouts around my running this week so neither suffers?" });
+  asks.push({ label: "Gym nerves", text: "I feel lost and a bit nervous in the gym. How do I feel confident — what to do first, gym etiquette, asking to share equipment?" });
+  asks.push({ label: "What to eat", text: "What should I eat before and after a gym workout to get stronger?" });
+  return asks;
+}
+
+// Shared by every JSON-mode call: one request shape, one set of error words.
+async function groqJson({ apiKey, model, system, user, signal, maxTokens = 2600, what = "Plan request" }) {
+  let res;
+  try {
+    res = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: model || DEFAULT_MODEL,
+        temperature: 0.4,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw e;
+    throw new Error("Couldn't reach Groq — check your connection and try again.");
+  }
+  if (!res.ok) await explainFailure(res, model, what);
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("The coach sent back an empty plan — try again.");
+  try { return JSON.parse(text); } catch { throw new Error("Couldn't read the plan the coach sent — try again."); }
+}
+
+const GYM_SHAPE = [
+  "Return ONLY a JSON object of this exact shape (no prose, no markdown):",
+  '{ "name": "short plan name", "summary": "one encouraging sentence", "level": "Beginner|Intermediate|Advanced",',
+  '  "daysPerWeek": 3, "weeks": 6, "minutes": 45, "tips": ["short practical tip"],',
+  '  "workouts": [ { "name": "Full body A", "focus": "Legs · push · pull", "exercises": [',
+  '    { "id": "leg-press", "sets": 3, "reps": "10-12", "rest": 90 },',
+  '    { "id": "plank", "sets": 3, "seconds": 30, "rest": 45 } ] } ] }',
+].join("\n");
+
+const GYM_RULES = [
+  "Rules:",
+  "- Use ONLY exercise ids from the library below, exactly as written, and only ones their equipment allows.",
+  "- 2 to 5 workouts that rotate (A, B, C…), one per gym visit, 4 to 7 exercises each.",
+  "- Big multi-joint moves first, smaller ones after, core last.",
+  "- Beginners: mostly machines and dumbbells, 2-3 sets of 10-15 reps, nothing that needs a spotter.",
+  '- reps is a number or a range like "8-12". Timed holds use "seconds" instead of reps.',
+  "- rest is in seconds: 45-90 for small moves and core, 90-180 for heavy compound lifts.",
+  "- Fit the session length: about 2.5 minutes per set including rest, plus a 5 minute warm-up.",
+  "- If they also run, keep leg work moderate and say in the tips how to schedule lifting around runs.",
+  "- tips: 2 to 4 short, practical sentences written for this person.",
+].join("\n");
+
+const gymSystem = (intro) =>
+  `${intro}\n\n${GYM_SHAPE}\n\n${GYM_RULES}\n\nExercise library (id: name — equipment; muscles):\n${libraryForPrompt()}`;
+
+const EQUIPMENT_WORDS = {
+  gym: "a full gym (machines, cables, barbells, dumbbells)",
+  dumbbells: "only dumbbells and a bench",
+  none: "no equipment at all (bodyweight only)",
+};
+
+// Ask for a whole gym plan from a few answers. Returns parsed JSON — validate it
+// with gym.js normalizeGymPlan before showing or applying it.
+export function generateGymPlan({ apiKey, model, prefs, summary, signal }) {
+  const user = [
+    "Build my gym plan.",
+    `Goal: ${prefs.goal}`,
+    `Experience: ${prefs.level}`,
+    `Days per week: ${prefs.days}`,
+    `Time per session: about ${prefs.minutes} minutes`,
+    `Equipment: ${EQUIPMENT_WORDS[prefs.equipment] || EQUIPMENT_WORDS.gym}`,
+    prefs.notes ? `Also: ${prefs.notes}` : "",
+    "My training data (running, and any gym history):",
+    JSON.stringify(summary),
+  ].filter(Boolean).join("\n");
+  return groqJson({
+    apiKey, model, signal, user,
+    system: gymSystem("You are an expert, encouraging strength coach writing a gym plan for a phone app. The person may be completely new to the gym, so keep it simple and safe."),
+  });
+}
+
+// Change an existing plan on request ("only 30 minutes", "my knee hurts").
+// Returns the full updated plan as parsed JSON — validate before applying.
+export function tweakGymPlan({ apiKey, model, program, request, summary, signal }) {
+  const user = [
+    "My current gym plan:",
+    JSON.stringify(programForPrompt(program)),
+    `What I want changed: ${request}`,
+    "My training data:",
+    JSON.stringify(summary),
+  ].join("\n");
+  return groqJson({
+    apiKey, model, signal, user,
+    system: gymSystem("You are an expert strength coach adjusting someone's gym plan for a phone app. Return the FULL updated plan. Change only what their request asks for and keep everything else as it was."),
+  });
+}
+
+// Quick feedback on one logged gym workout (plain text, via the chat path so
+// the whole training summary stays in context).
+export function coachWorkout({ apiKey, model, summary, workout, signal }) {
+  const messages = [{
+    role: "user",
+    content: [
+      "Give quick, specific feedback on THIS gym workout: 2-3 short lines starting with '- '",
+      "(effort, the weights, what it shows compared with before), then a final 'Next time: '",
+      "line with one concrete change. Under 110 words, plain text. The workout:",
+      JSON.stringify(workout),
+    ].join("\n"),
+  }];
+  return askCoach({ apiKey, model, summary, messages, signal });
+}
+
+// A question asked mid-workout about the exercise on screen: the kit is taken,
+// the weight feels wrong, something hurts. Short and immediately usable.
+export function askAboutExercise({ apiKey, model, summary, exercise, question, signal }) {
+  const messages = [{
+    role: "user",
+    content: [
+      `I'm in the gym right now, mid-workout, doing ${exercise.name} (${exercise.target}).`,
+      exercise.lastTime ? `Last time I did ${exercise.lastTime}.` : "It's my first time doing it.",
+      exercise.today ? `Sets so far today: ${exercise.today}.` : "",
+      `Question: ${question}`,
+      "Answer in under 90 words, plain text, practical and specific to this exercise. If you suggest a",
+      "different exercise, name one I can do in a normal gym with the same sets and reps.",
+    ].filter(Boolean).join("\n"),
   }];
   return askCoach({ apiKey, model, summary, messages, signal });
 }

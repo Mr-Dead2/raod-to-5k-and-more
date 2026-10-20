@@ -3,20 +3,24 @@ import { ShareSheet } from "./components/ShareSheet.jsx";
 import { copyText, fmtClock } from "./share.js";
 import { RouteReplay } from "./components/RouteReplay.jsx";
 import { RouteMaker } from "./components/RouteMaker.jsx";
-import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint, ringColors } from "./data.js";
+import { WEEKS, FLAT, TOTAL, DEFAULT_WEEKS, C, typeColor, ACCENTS, applyAccent, applyPlan, tint, ringColors, FEELS } from "./data.js";
 import {
   Icon, IconBadge, Card, Label, Bar, Group, Cell, Screen, NavBar, useNavCollapse, Segmented, Switch,
   GlassButton, Tile, Metric, MetricGrid, Rings, Island,
 } from "./components/ui.jsx";
 import { appCss } from "./styles.js";
 import { extendPlan, planSplit, adaptedPlan } from "./plan.js";
-import { loadLog, saveLog, loadSettings, saveSettings } from "./storage.js";
+import { loadLog, saveLog, loadSettings, saveSettings, loadActiveWorkout } from "./storage.js";
 import { WeeklyBars, CumulativeArea, StreakGrid, PaceTrend } from "./components/Charts.jsx";
 import { LiveMap } from "./components/LiveMap.jsx";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { RunTracker } from "./components/RunTracker.jsx";
 import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
+import { GymTab } from "./components/GymTab.jsx";
+import { WorkoutPlayer } from "./components/WorkoutPlayer.jsx";
+import { useGym } from "./useGym.js";
+import { gymSummary, nextWorkout, planSessions, buildDraft, sessionVolume } from "./gym.js";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
 import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
@@ -50,9 +54,6 @@ const paceSec = (min, km) => {
 const fmtPace = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : null);
 const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`);
 
-// 1–5 effort scale logged per session (user content, like the badge emoji).
-const FEELS = ["😖", "😕", "🙂", "😄", "🤩"];
-
 const startOfDay = (iso) => { const d = new Date(iso + "T00:00:00"); d.setHours(0, 0, 0, 0); return d; };
 const todayIndexOf = (iso) => {
   if (!iso) return -1;
@@ -84,7 +85,7 @@ export default function App() {
   const [log, setLog] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(null);
-  const [tab, setTab] = useState("plan"); // plan | stats | history
+  const [tab, setTab] = useState("plan"); // plan | gym | stats | coach | history
   const [tipsOpen, setTipsOpen] = useState(false);
   const notifCardRef = useRef(null);
   const [startDate, setStartDate] = useState("");
@@ -99,11 +100,15 @@ export default function App() {
   const [statsView, setStatsView] = useState("overview"); // overview | goal | charts | awards | settings
   const [selectedCustomRoute, setSelectedCustomRoute] = useState(null);
 
+  // the gym: logged workouts, the chosen plan and the workout in progress
+  const gym = useGym();
+  const [workoutOpen, setWorkoutOpen] = useState(false);
+
   // reminders + per-type notification switches
   const [remOn, setRemOn] = useState(false);
   const [remTime, setRemTime] = useState("18:00");
   const [perm, setPerm] = useState("default");
-  const [notif, setNotif] = useState({ runLive: true, runKm: true, runInterval: true, runFinish: true, milestone: true, skipRest: false });
+  const [notif, setNotif] = useState({ runLive: true, runKm: true, runInterval: true, runFinish: true, milestone: true, gymRest: true, skipRest: false });
 
   // race goal beyond the starter plan
   const [goalRace, setGoalRace] = useState(DEFAULT_GOAL_RACE);
@@ -172,7 +177,7 @@ export default function App() {
       const r = await loadReminder();
       setRemOn(!!r.enabled);
       setRemTime(r.time || "18:00");
-      setNotif({ runLive: r.runLive !== false, runKm: r.runKm !== false, runInterval: r.runInterval !== false, runFinish: r.runFinish !== false, milestone: r.milestone !== false, skipRest: !!r.skipRest });
+      setNotif({ runLive: r.runLive !== false, runKm: r.runKm !== false, runInterval: r.runInterval !== false, runFinish: r.runFinish !== false, milestone: r.milestone !== false, gymRest: r.gymRest !== false, skipRest: !!r.skipRest });
     })();
     // native app setup (no-ops on the web)
     styleStatusBar();
@@ -487,7 +492,36 @@ export default function App() {
 
   const coachSummary = () => buildSummary({
     stats, weekly, history, goal: coachGoal, race: coachRaceGoal, plan: coachPlanContext(),
+    gym: gymSummary({ program: gym.program, plan: gym.plan, sessions: gym.log }),
   });
+
+  // --- the gym ----------------------------------------------------------------
+  // The tab and the player own the screens; App only starts a workout, files
+  // it when it's saved, and routes questions to the coach.
+  const startWorkout = (program, workout) => {
+    gym.setActive(buildDraft(program, workout, gym.log));
+    setWorkoutOpen(true);
+  };
+  const saveWorkout = (session, prs) => {
+    gym.saveSession(session);
+    gym.setActive(null);
+    setWorkoutOpen(false);
+    haptic([15, 30, 15]);
+    confetti({ count: 110, spread: 1.2 });
+    setToast(prs && prs.length
+      ? { icon: "🏆", title: `New best: ${prs[0].name} ${prs[0].label}`, label: "WORKOUT SAVED" }
+      : { icon: "💪", title: `${session.workoutName} done — nice work`, label: "WORKOUT SAVED" });
+  };
+  const gymCoach = () => ({ apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, getSummary: coachSummary });
+  // A question asked from another tab lands in the one conversation, where the
+  // answer streams and can be followed up.
+  const askCoachFrom = (text, label) => { setTab("coach"); sendToCoach(text, label); };
+  const needCoachKey = () => {
+    haptic(8);
+    setTab("coach");
+    setShowKey(true);
+    setCoachErr("Add your free Groq API key below to switch the AI coach on.");
+  };
 
   // Send a message through the coach. `content` is what the model receives;
   // `display` (optional) is the friendlier text shown in the user bubble.
@@ -656,7 +690,7 @@ export default function App() {
     haptic(8);
     // keep the secret Groq key out of backup files (export can open a share sheet)
     const { groqKey, ...safeSettings } = loadSettings();
-    const payload = { app: "stride", version: 2, exportedAt: new Date().toISOString(), log, settings: { ...safeSettings, startDate } };
+    const payload = { app: "stride", version: 2, exportedAt: new Date().toISOString(), log, gym: gym.log, settings: { ...safeSettings, startDate } };
     const json = JSON.stringify(payload, null, 2);
     const filename = `stride-backup-${new Date().toISOString().slice(0, 10)}.json`;
     // native: Blob downloads don't work in the WebView — share the file instead
@@ -678,8 +712,8 @@ export default function App() {
   // straight out of localStorage — so runs survive any app version change.
   const parseBackup = (data) => {
     if (!data || typeof data !== "object") return null;
-    if (data.log && typeof data.log === "object") return { log: data.log, settings: data.settings || {} };
-    if (Object.keys(data).some((k) => /^w\d+d\d+$/.test(k))) return { log: data, settings: {} };
+    if (data.log && typeof data.log === "object") return { log: data.log, settings: data.settings || {}, gym: Array.isArray(data.gym) ? data.gym : [] };
+    if (Object.keys(data).some((k) => /^w\d+d\d+$/.test(k))) return { log: data, settings: {}, gym: [] };
     return null;
   };
   const importData = async (file) => {
@@ -702,8 +736,10 @@ export default function App() {
         if (backup.settings.customPlan) setActivePlan(backup.settings.customPlan);
         if (backup.settings.goalRace) saveGoalRace(backup.settings.goalRace);
         if (backup.settings.goalDate) saveGoalDate(backup.settings.goalDate);
+        if (backup.settings.gymPlan) gym.restorePlan(backup.settings.gymPlan);
+        const lifted = gym.mergeSessions(backup.gym);
         haptic([10, 30, 10]);
-        setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}`, label: "BACKUP" });
+        setToast({ icon: "✅", title: `Backup restored — ${restored} session${restored === 1 ? "" : "s"}${lifted ? ` · ${lifted} gym workout${lifted === 1 ? "" : "s"}` : ""}`, label: "BACKUP" });
       } else setToast({ icon: "⚠️", title: "Not a valid backup file", label: "BACKUP" });
     } catch { setToast({ icon: "⚠️", title: "Couldn't read that file", label: "BACKUP" }); }
   };
@@ -855,7 +891,11 @@ export default function App() {
     return runs.map((r) => { total += parseFloat(r.e.km); return { total }; });
   }, [history]);
 
-  const unlocked = useMemo(() => unlockedIds(stats), [stats]);
+  const gymStats = useMemo(() => ({
+    gymWorkouts: gym.log.length,
+    gymMaxVolume: gym.log.reduce((m, s) => Math.max(m, sessionVolume(s)), 0),
+  }), [gym.log]);
+  const unlocked = useMemo(() => unlockedIds({ ...stats, ...gymStats }), [stats, gymStats]);
 
   // achievement unlock toast
   const prevUnlocked = useRef(null);
@@ -973,6 +1013,7 @@ export default function App() {
 
   const screenTitle = {
     plan: heroIdx >= 0 ? "Today" : hero ? "Next up" : "Block complete",
+    gym: "Gym",
     stats: "Your numbers",
     coach: "Coach",
     history: "History",
@@ -1022,6 +1063,13 @@ export default function App() {
           <Group>
             <Cell icon="download" iconColor={C.blue} title="Install Stride" sub="Add it to your home screen — it works offline" chevron onClick={doInstall} />
           </Group>
+        )}
+
+        {tab === "gym" && (
+          <GymTab gym={gym} eyebrow={todayLabel} trailing={appControls(36)} coach={gymCoach()}
+            onStartWorkout={startWorkout} onResume={() => setWorkoutOpen(true)}
+            onDiscardActive={() => { gym.setActive(null); haptic(10); setToast({ icon: "🗑️", title: "Workout discarded", label: "GYM" }); }}
+            onAskCoach={askCoachFrom} onNeedKey={needCoachKey} setToast={setToast} />
         )}
 
         {tab === "stats" && (
@@ -1275,6 +1323,7 @@ export default function App() {
                   ["runKm", "Kilometre splits", "A buzz and your split at every kilometre", "flag", C.cyan],
                   ["runInterval", "Run / walk switches", "When to run and when to walk", "repeat", C.purple],
                   ["runFinish", "Run finished", "A summary the moment you stop", "check", C.good],
+                  ["gymRest", "Gym rest timer", "When your rest between sets is over", "timer", C.yellow],
                   ["milestone", "Awards", "When you unlock a badge", "medal", C.yellow],
                   ["skipRest", "Quiet on rest days", "Skip the daily nudge when the plan says rest", "moon", C.blue],
                 ].map(([key, title, desc, icon, color]) => {
@@ -1444,6 +1493,7 @@ export default function App() {
             race: goal ? goal.name : null,
             raceDays: goalDate ? goalDays : null,
             todaySession: todayKey && todayIdx >= 0 && todayIdx < TOTAL ? FLAT[todayIdx] : null,
+            gymNext: gym.program ? nextWorkout(gym.program, planSessions(gym.plan, gym.log)) : null,
           });
           const hasChat = coachChat.length > 0 || coachBusy;
           const avatar = (
@@ -1467,7 +1517,7 @@ export default function App() {
                   <span className="t-headline">Switch on your coach</span>
                 </div>
                 <div className="t-sub" style={{ color: C.dim, marginBottom: 14 }}>
-                  Your coach reads every run you've logged and answers from those numbers. Paste a
+                  Your coach reads every run and gym workout you've logged and answers from those numbers. Paste a
                   free Groq API key to switch it on — it's stored on this device and never leaves it
                   except to reach Groq.
                 </div>
@@ -1513,7 +1563,7 @@ export default function App() {
                   </div>
                   <div className="t-sub" style={{ color: C.dim, maxWidth: 330, margin: "6px auto 0" }}>
                     {stats.runsLogged
-                      ? `I can see your ${stats.runsLogged} logged run${stats.runsLogged === 1 ? "" : "s"}, your paces, your plan and what's coming up.`
+                      ? `I can see your ${stats.runsLogged} logged run${stats.runsLogged === 1 ? "" : "s"}${gym.log.length ? `, ${gym.log.length} gym workout${gym.log.length === 1 ? "" : "s"}` : ""}, your paces, your plan and what's coming up.`
                       : "Tick off a session or track a run with GPS, then come back for a read on it."}
                   </div>
                   <button onClick={analyseCoach} disabled={coachBusy} className="cta tap"
@@ -1884,6 +1934,16 @@ export default function App() {
               </Group>
             )}
 
+            {/* A gym workout left mid-way (minimised, or the app was closed) is
+                one tap away from wherever the app opens. */}
+            {gym.active && !workoutOpen && (
+              <Group style={{ marginBottom: 14 }}>
+                <Cell icon="dumbbell" iconColor={C.yellow} title="Gym workout in progress"
+                  sub={`${gym.active.workoutName} · pick up where you left off`} chevron
+                  onClick={() => { haptic(10); setWorkoutOpen(true); }} />
+              </Group>
+            )}
+
             {/* What the watch recorded since last time, one tap from the plan. */}
             {(() => {
               if (!hcScan) return null;
@@ -2216,6 +2276,29 @@ export default function App() {
             onShare={(run) => openShare({ kind: "run", data: run })}
             onClose={() => setTrackerOpen(false)}
           />
+        </ErrorBoundary>
+      )}
+
+      {workoutOpen && gym.active && (
+        <ErrorBoundary fallback={(err) => (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 9999, background: C.bg, color: C.text,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            gap: 14, padding: 24, textAlign: "center", paddingTop: "max(24px, env(safe-area-inset-top))",
+          }}>
+            <span style={{ width: 64, height: 64, borderRadius: "50%", background: tint(C.warn, 0.16), color: C.warn, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon name="dumbbell" size={30} />
+            </span>
+            <div className="t-title3">The workout screen hit a snag</div>
+            <div className="t-sub" style={{ color: C.dim, maxWidth: 320 }}>Every set you ticked is saved. Head back and resume it from the Gym tab.</div>
+            <pre style={{ maxWidth: 340, width: "100%", overflow: "auto", textAlign: "left", fontSize: 12, background: C.surface, borderRadius: 14, padding: 12, color: C.warn, whiteSpace: "pre-wrap", margin: 0 }}>{err?.message || String(err)}</pre>
+            <button onClick={() => { gym.setActive(loadActiveWorkout()); setWorkoutOpen(false); }} className="btn" style={{ padding: "13px 24px", fontSize: 17 }}>Back</button>
+          </div>
+        )}>
+          <WorkoutPlayer draft={gym.active} sessions={gym.log} coach={gymCoach()}
+            onSave={saveWorkout}
+            onDiscard={() => { gym.setActive(null); setWorkoutOpen(false); haptic(10); setToast({ icon: "🗑️", title: "Workout discarded", label: "GYM" }); }}
+            onMinimize={(d) => { gym.setActive(d); setWorkoutOpen(false); haptic(6); }} />
         </ErrorBoundary>
       )}
 

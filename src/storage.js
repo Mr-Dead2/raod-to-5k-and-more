@@ -43,3 +43,38 @@ export function loadSettings() {
 export function saveSettings(s) {
   try { localStorage.setItem(SETTINGS, JSON.stringify(s)); } catch { /* ignore */ }
 }
+
+// The gym, kept apart from the run log because it isn't keyed by plan day:
+// logged workouts as a list, and the one in progress, saved after every tick
+// so a killed app or a dead battery mid-workout loses nothing.
+const GYM = "run5k:gym:v1";
+const GYM_ACTIVE = "run5k:gym:active";
+
+export function loadGym() {
+  try {
+    const v = JSON.parse(localStorage.getItem(GYM));
+    return Array.isArray(v) ? v.filter((s) => s && typeof s === "object" && s.id) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveGym(sessions) {
+  try { localStorage.setItem(GYM, JSON.stringify(sessions)); } catch { /* ignore */ }
+}
+
+export function loadActiveWorkout() {
+  try {
+    const v = JSON.parse(localStorage.getItem(GYM_ACTIVE));
+    return v && v.v === 1 && Array.isArray(v.items) && v.items.length ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveActiveWorkout(draft) {
+  try {
+    if (draft) localStorage.setItem(GYM_ACTIVE, JSON.stringify(draft));
+    else localStorage.removeItem(GYM_ACTIVE);
+  } catch { /* ignore */ }
+}

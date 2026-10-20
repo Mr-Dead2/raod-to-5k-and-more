@@ -13,6 +13,10 @@ export const ACHIEVEMENTS = [
   { id: "streak7", icon: "⛓️", title: "Unbroken", desc: "Hit a 7-day streak", test: (c) => c.best >= 7 },
   { id: "marathon", icon: "🗺️", title: "Marathon Month", desc: "Log 42.2 km in total", test: (c) => c.kmLogged >= 42.2 },
   { id: "complete", icon: "🎖️", title: "Mission Complete", desc: "Finish the whole plan", test: (c) => c.total > 0 && c.done >= c.total },
+  // the gym (counts come from App's gym log, not the run plan)
+  { id: "lift1", icon: "🏋️", title: "First Lift", desc: "Finish your first gym workout", test: (c) => (c.gymWorkouts || 0) >= 1 },
+  { id: "lift10", icon: "💪", title: "Gym Regular", desc: "Finish 10 gym workouts", test: (c) => (c.gymWorkouts || 0) >= 10 },
+  { id: "ton", icon: "🦾", title: "Ton Up", desc: "Lift 1,000 kg in one workout", test: (c) => (c.gymMaxVolume || 0) >= 1000 },
 ];
 
 // Returns the set of unlocked achievement ids for a given context.
