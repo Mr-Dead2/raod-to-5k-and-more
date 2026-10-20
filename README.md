@@ -24,12 +24,14 @@ to your phone like a normal app and works offline.
 - **Stats & charts**: km per week logged vs plan, pace trend, cumulative
   distance, a day-by-day calendar, personal records and achievements.
 - **History**: every session with distance, time, pace, route thumbnail, splits
-  and a replay.
+  and a replay — and every gym workout, with a Gym filter.
 - **Gym plans** for people who don't know what to do in a gym: six ready-made
   plans (a machines-first beginner plan, dumbbells only, runner's strength, no
   equipment, upper/lower, push/pull/legs), 43 exercises each explained in plain
   steps with a muscle map, and a guided workout that shows one exercise at a
   time, logs your sets, times your rest and tells you when to go heavier.
+  Workouts land in History next to your runs, and share as an image with your
+  muscle map, the weight you lifted and any new personal bests.
 - **AI coach** (optional, your own free Groq key) for analysis and new plan blocks —
   and for the gym: it writes a gym plan from five quick answers, rewrites yours
   on request ("only 30 minutes", "easy on my knees"), reviews a workout, and

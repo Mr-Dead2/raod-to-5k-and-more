@@ -11,21 +11,20 @@
 // useGym; what's here is only how the tab is being looked at.
 // ---------------------------------------------------------------------------
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { C, tint, FEELS } from "../data.js";
+import { C, tint } from "../data.js";
 import { Icon, IconBadge, Card, Label, Group, Cell, Screen, Segmented, Tile, MetricGrid, Rings } from "./ui.jsx";
 import { Sheet } from "./Sheet.jsx";
 import { BodyMap } from "./BodyMap.jsx";
-import { ExerciseCell, ExerciseSheet, groupColor, equipIcon, shortDate, ago } from "./GymParts.jsx";
+import { ExerciseCell, ExerciseSheet, GymSessionCard, groupColor, equipIcon, shortDate, ago } from "./GymParts.jsx";
 import { haptic, confetti } from "../celebrate.js";
 import { loadSettings, saveSettings } from "../storage.js";
-import { fmtClock } from "../share.js";
 import {
   PROGRAMS, EXERCISES, EQUIPMENT, GROUPS, WARMUP, exerciseList, groupOf, muscleNames,
   targetLabel, workoutMinutes, workoutSets, workoutMuscles, suggestion, fmtKg,
-  planSessions, nextWorkout, sessionsThisWeek, sameDay, personalBests, setLabel, setsText,
-  sessionVolume, sessionSets, normalizeGymPlan, newBestsBySession,
+  planSessions, nextWorkout, sessionsThisWeek, sameDay, personalBests, setLabel,
+  sessionVolume, normalizeGymPlan,
 } from "../gym.js";
-import { generateGymPlan, tweakGymPlan, coachWorkout, gymAsks } from "../coach.js";
+import { generateGymPlan, tweakGymPlan, gymAsks } from "../coach.js";
 
 const GOALS = [
   { id: "muscle", label: "Build muscle", words: "build muscle and look more toned" },
@@ -173,60 +172,10 @@ function WorkoutSheet({ workout, sessions, onStart, onExercise, onClose }) {
   );
 }
 
-function SessionCard({ s, bests, busy, feedback, armed, onCoach, onDelete, idx }) {
-  const vol = sessionVolume(s);
-  return (
-    <div className="card" style={{ padding: "14px 16px 16px", animation: "rise .34s cubic-bezier(.2,.8,.2,1) both", animationDelay: `${Math.min(idx * 0.04, 0.3)}s` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ width: 40, height: 40, borderRadius: "50%", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", background: tint(C.accent, 0.16), color: C.accent }}>
-          <Icon name="dumbbell" size={22} weight={2} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="t-headline" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.workoutName}</div>
-          <div className="t-foot" style={{ color: C.dim }}>{shortDate(s.date)}{s.programName ? ` · ${s.programName}` : ""}</div>
-        </div>
-        {s.feel ? <span style={{ fontSize: 24, flexShrink: 0 }} aria-label={`Felt ${s.feel} of 5`}>{FEELS[s.feel - 1]}</span> : null}
-      </div>
-
-      <div style={{ marginTop: 6 }}>
-        <MetricGrid cols={3} size={22} items={[
-          { label: "Time", value: fmtClock(s.durMs || 0), color: C.yellow },
-          { label: "Lifted", value: tonnes(vol).value, unit: tonnes(vol).unit, color: C.accent },
-          { label: "Sets", value: sessionSets(s) },
-        ]} />
-      </div>
-
-      <div style={{ marginTop: 4 }}>
-        {(s.exercises || []).map((e, i) => (
-          <div key={i} className="split-row" style={{ alignItems: "baseline" }}>
-            <span className="t-sub" style={{ flex: 1, minWidth: 0 }}>{e.name}</span>
-            <span className="num t-foot" style={{ color: C.dim, textAlign: "right" }}>{setsText(e)}</span>
-          </div>
-        ))}
-      </div>
-
-      {bests.length > 0 && (
-        <div className="t-foot" style={{ color: C.yellow, fontWeight: 600, marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}>
-          <Icon name="trophy" size={15} /> New best: {bests.map((b) => `${b.name} ${b.label}`).join(" · ")}
-        </div>
-      )}
-      {s.note && <div className="t-sub" style={{ color: C.dim, marginTop: 10, paddingLeft: 12, borderLeft: `3px solid ${tint(C.accent, 0.5)}` }}>{s.note}</div>}
-
-      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        <button onClick={onCoach} disabled={busy} className="btn tinted" style={{ flex: 1.5, padding: "11px 0", whiteSpace: "nowrap" }}>
-          <Icon name="sparkles" size={16} /> {busy ? "Reading…" : feedback ? "Ask again" : "Coach this workout"}
-        </button>
-        <button onClick={onDelete} className={`btn${armed ? " danger" : ""}`} style={{ flex: armed ? 1.3 : 0.7, padding: "11px 0", whiteSpace: "nowrap" }}
-          aria-label={armed ? "Tap again to delete this workout" : "Delete this workout"}>
-          {armed ? "Tap to delete" : <Icon name="trash" size={17} />}
-        </button>
-      </div>
-      {feedback && <div className="rise bubble them" style={{ marginTop: 12, maxWidth: "100%" }}>{feedback}</div>}
-    </div>
-  );
-}
-
-export function GymTab({ gym, eyebrow, trailing, coach, onStartWorkout, onResume, onDiscardActive, onAskCoach, onNeedKey, setToast }) {
+export function GymTab({
+  gym, eyebrow, trailing, coach, onStartWorkout, onResume, onDiscardActive, onAskCoach, onNeedKey, setToast,
+  onShareWorkout, onCoachWorkout, workoutFeedback, feedbackBusy,
+}) {
   const [view, setView] = useState("today");
   const [progSheet, setProgSheet] = useState(null);   // { program, mode: "browse" | "proposal" }
   const [workSheet, setWorkSheet] = useState(null);   // a workout to preview
@@ -235,8 +184,6 @@ export function GymTab({ gym, eyebrow, trailing, coach, onStartWorkout, onResume
   const [aiBusy, setAiBusy] = useState(null);         // "build" | "tweak"
   const [aiErr, setAiErr] = useState("");
   const [tweak, setTweak] = useState("");
-  const [feedback, setFeedback] = useState({});       // { [sessionId]: text }
-  const [fbBusy, setFbBusy] = useState(null);
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [armed, setArmed] = useState(null);           // two-tap confirmations
@@ -258,7 +205,6 @@ export function GymTab({ gym, eyebrow, trailing, coach, onStartWorkout, onResume
   const curWeek = program ? Math.min(program.weeks, Math.floor(done.length / program.days) + 1) : 0;
   const planDone = !!program && done.length >= total;
   const bests = useMemo(() => personalBests(sessions), [sessions]);
-  const bestsBySession = useMemo(() => newBestsBySession(sessions), [sessions]);
 
   // Destructive actions take a second tap within a few seconds.
   const arm = (key, fn) => {
@@ -319,34 +265,6 @@ export function GymTab({ gym, eyebrow, trailing, coach, onStartWorkout, onResume
     const request = (text ?? tweak).trim();
     if (!request || !program) return;
     runAi("tweak", (signal) => tweakGymPlan({ apiKey: coach.apiKey, model: coach.model, program, request, summary: coach.getSummary(), signal }));
-  };
-
-  const coachThis = async (s) => {
-    if (fbBusy) return;
-    if (!coach.apiKey) { onNeedKey(); return; }
-    haptic(8);
-    setFbBusy(s.id);
-    try {
-      const text = await coachWorkout({
-        apiKey: coach.apiKey, model: coach.model, summary: coach.getSummary(),
-        workout: {
-          date: s.date ? s.date.slice(0, 10) : null,
-          workout: s.workoutName,
-          plan: s.programName,
-          minutes: Math.round((s.durMs || 0) / 60000),
-          feel: s.feel || null,
-          note: s.note || null,
-          lifts: (s.exercises || []).map((e) => `${e.name}: ${setsText(e)}`),
-          newBests: (bestsBySession.get(s.id) || []).map((b) => `${b.name} ${b.label} (was ${b.was})`),
-        },
-      });
-      setFeedback((m) => ({ ...m, [s.id]: text }));
-      haptic([10, 20, 10]);
-    } catch (e) {
-      setFeedback((m) => ({ ...m, [s.id]: `⚠️ ${e.message || "Couldn't reach the coach."}` }));
-    } finally {
-      setFbBusy(null);
-    }
   };
 
   const askAbout = (ex) => onAskCoach(
@@ -703,10 +621,11 @@ export function GymTab({ gym, eyebrow, trailing, coach, onStartWorkout, onResume
 
       <div style={{ display: "grid", gap: 14 }}>
         {sessions.map((s, i) => (
-          <SessionCard key={s.id} s={s} idx={i}
-            bests={bestsBySession.get(s.id) || []}
-            busy={fbBusy === s.id} feedback={feedback[s.id]} armed={armed === `del:${s.id}`}
-            onCoach={() => coachThis(s)}
+          <GymSessionCard key={s.id} s={s} idx={i}
+            bests={gym.bestsBySession.get(s.id) || []}
+            onShare={() => onShareWorkout(s)}
+            onCoach={() => onCoachWorkout(s)} coachBusy={feedbackBusy === s.id} feedback={workoutFeedback[s.id]}
+            armed={armed === `del:${s.id}`}
             onDelete={() => arm(`del:${s.id}`, () => { gym.deleteSession(s.id); haptic(10); })} />
         ))}
       </div>

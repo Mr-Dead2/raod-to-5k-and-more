@@ -3,7 +3,7 @@
 // arithmetic lives in gym.js.
 import { useMemo, useState } from "react";
 import { loadSettings, saveSettings, loadGym, saveGym, loadActiveWorkout, saveActiveWorkout } from "./storage.js";
-import { programById, normalizeGymPlan, sortSessions } from "./gym.js";
+import { programById, normalizeGymPlan, sortSessions, newBestsBySession } from "./gym.js";
 
 // Settings key `gymPlan`: { id, startedAt } for a ready-made plan, plus the
 // whole `program` for one the coach wrote. A stored AI plan is re-validated on
@@ -18,6 +18,9 @@ export function useGym() {
   const [plan, setPlan] = useState(() => loadSettings().gymPlan || null);
   const [active, setActiveState] = useState(loadActiveWorkout);
   const program = useMemo(() => resolve(plan), [plan]);
+  // Each session's new personal bests, worked out once for every screen that
+  // shows a workout (the Gym log, History, share cards, the coach).
+  const bestsBySession = useMemo(() => newBestsBySession(log), [log]);
 
   const persistPlan = (next) => {
     setPlan(next);
@@ -65,5 +68,5 @@ export function useGym() {
 
   const setActive = (d) => { setActiveState(d); saveActiveWorkout(d); };
 
-  return { log, plan, program, active, startPlan, stopPlan, restorePlan, saveSession, deleteSession, mergeSessions, setActive };
+  return { log, plan, program, active, bestsBySession, startPlan, stopPlan, restorePlan, saveSession, deleteSession, mergeSessions, setActive };
 }

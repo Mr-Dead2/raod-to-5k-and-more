@@ -27,6 +27,7 @@ import {
 // Which styles make sense for each card kind.
 const STYLE_FOR = {
   run: ["bold", "route", "minimal"],
+  gym: ["bold"],
   progress: ["bold"],
   achievement: ["bold"],
   goal: ["bold"],
@@ -65,6 +66,8 @@ export function ShareSheet({ spec, onClose, onToast }) {
   const [showSplits, setShowSplits] = useState(true);
   const [showExtras, setShowExtras] = useState(true);
   const [showDate, setShowDate] = useState(true);
+  const [showMuscles, setShowMuscles] = useState(true);
+  const [showLifts, setShowLifts] = useState(true);
 
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(true);
@@ -154,8 +157,10 @@ export function ShareSheet({ spec, onClose, onToast }) {
       extras: showExtras,
       date: showDate,
       note: spec.footer,
+      muscles: showMuscles,
+      lifts: showLifts,
     },
-  }), [kind, data, spec.title, spec.footer, format, style, canRoute, showRoute, showSplits, showExtras, showDate]);
+  }), [kind, data, spec.title, spec.footer, format, style, canRoute, showRoute, showSplits, showExtras, showDate, showMuscles, showLifts]);
 
   // Re-render the preview whenever anything about the card changes.
   useEffect(() => {
@@ -290,6 +295,14 @@ export function ShareSheet({ spec, onClose, onToast }) {
               {hasRoute && <Toggle on={showRoute} set={setShowRoute}>Route</Toggle>}
               {hasSplits && <Toggle on={showSplits} set={setShowSplits}>Splits</Toggle>}
               <Toggle on={showExtras} set={setShowExtras}>Extras</Toggle>
+              <Toggle on={showDate} set={setShowDate}>Date</Toggle>
+            </div>
+          )}
+
+          {kind === "gym" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
+              {data.muscles && data.muscles.primary && data.muscles.primary.length > 0 && <Toggle on={showMuscles} set={setShowMuscles}>Muscles</Toggle>}
+              {Array.isArray(data.lifts) && data.lifts.length > 0 && <Toggle on={showLifts} set={setShowLifts}>Exercises</Toggle>}
               <Toggle on={showDate} set={setShowDate}>Date</Toggle>
             </div>
           )}
