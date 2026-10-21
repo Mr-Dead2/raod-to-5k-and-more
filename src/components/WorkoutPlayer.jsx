@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { C, tint, FEELS } from "../data.js";
-import { Icon, Group, Cell, MetricGrid } from "./ui.jsx";
+import { Icon, Group, Cell, MetricGrid, GlassButton } from "./ui.jsx";
 import { Sheet } from "./Sheet.jsx";
 import { BodyMap } from "./BodyMap.jsx";
 import { HowTo, groupColor, equipIcon } from "./GymParts.jsx";
@@ -257,7 +257,7 @@ function ExercisePanel({ d, i, sessions, need, howOpen, onHow, onField, onTick, 
   );
 }
 
-export function WorkoutPlayer({ draft, sessions, coach, onSave, onDiscard, onMinimize }) {
+export function WorkoutPlayer({ draft, sessions, coach, onSave, onDiscard, onMinimize, onShare }) {
   const [d, setD] = useState(draft);
   const [now, setNow] = useState(() => Date.now());
   const [sound, setSound] = useState(() => loadSettings().gymSound !== false);
@@ -582,10 +582,15 @@ export function WorkoutPlayer({ draft, sessions, coach, onSave, onDiscard, onMin
             {session && session.exercises.length ? (
               <>
                 <div className="card accented" style={{ padding: "16px 18px 8px", marginBottom: 14 }}>
-                  <div className="t-foot" style={{ color: C.dim, fontWeight: 600 }}>
-                    {new Date(session.date).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="t-foot" style={{ color: C.dim, fontWeight: 600 }}>
+                        {new Date(session.date).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}
+                      </div>
+                      <div className="t-title2" style={{ marginTop: 2 }}>{d.workoutName}</div>
+                    </div>
+                    {onShare && <GlassButton icon="share" label="Share this workout" size={38} onClick={() => onShare(session, prs)} />}
                   </div>
-                  <div className="t-title2" style={{ marginTop: 2 }}>{d.workoutName}</div>
                   <MetricGrid size={30} items={[
                     { label: "Time", value: fmtClock(session.durMs), color: C.yellow },
                     { label: "Lifted", value: Math.round(sessionVolume(session)).toLocaleString(), unit: "kg", color: C.accent },

@@ -1003,3 +1003,43 @@ export function gymSummary({ program, plan, sessions }) {
     personalBests: bests,
   };
 }
+
+// ---------------------------------------------------------------------------
+// One logged workout, as the share card and the coach each need it. `bests`
+// are that session's new personal bests (newBests / newBestsBySession).
+// ---------------------------------------------------------------------------
+export function workoutCard(s, bests = []) {
+  const primary = new Set(), secondary = new Set();
+  let reps = 0;
+  for (const e of s.exercises || []) {
+    const ex = EXERCISES[e.ex];
+    if (ex) { ex.primary.forEach((m) => primary.add(m)); ex.secondary.forEach((m) => secondary.add(m)); }
+    for (const x of e.sets || []) reps += num(x.reps);
+  }
+  primary.forEach((m) => secondary.delete(m));
+  return {
+    title: s.workoutName || "Workout",
+    plan: s.programName || null,
+    date: s.date,
+    durMs: s.durMs || 0,
+    volume: sessionVolume(s),
+    sets: sessionSets(s),
+    reps,
+    exercises: (s.exercises || []).length,
+    lifts: (s.exercises || []).map((e) => ({ name: e.name, text: setsText(e) })),
+    bests: bests.map((b) => ({ name: b.name, label: b.label })),
+    muscles: { primary: [...primary], secondary: [...secondary] },
+    note: s.note || null,
+  };
+}
+
+export const workoutForCoach = (s, bests = []) => ({
+  date: s.date ? s.date.slice(0, 10) : null,
+  workout: s.workoutName,
+  plan: s.programName,
+  minutes: Math.round((s.durMs || 0) / 60000),
+  feel: s.feel || null, // 1 (rough) .. 5 (great)
+  note: s.note || null,
+  lifts: (s.exercises || []).map((e) => `${e.name}: ${setsText(e)}`),
+  newBests: bests.map((b) => `${b.name} ${b.label} (was ${b.was})`),
+});

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Share cards.
 //
-// One canvas renderer that turns anything worth bragging about — a run, the
-// whole training block, a badge, a race prediction — into an image sized for
+// One canvas renderer that turns anything worth bragging about — a run, a gym
+// workout, the whole training block, a badge, a race prediction — into an image sized for
 // the place it is going (a feed square, a 9:16 story, a wide link preview).
 //
 // Everything here is pure drawing plus a thin export layer; the picker UI lives
@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 import { C, tint } from "./data.js";
 import { isNative } from "./native.js";
+import { SILHOUETTE, LIMBS, FRONT, BACK, FIGURE_W, FIGURE_H, FIGURE_GAP } from "./bodyShapes.js";
 
 // Cards are laid out in these logical units and rendered at SCALE for crispness.
 // 540×540 → 1080×1080, 540×960 → 1080×1920, 640×335 → 1280×670.
@@ -170,6 +171,82 @@ function chip(ctx, str, x, y, { h = 26, pad = 12, size = 11.5, color = C.dim, bg
   if (border) { ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.stroke(); }
   text(ctx, str, x + pad, y + h / 2 + 0.5, { font: `700 ${size}px ${BODY}`, color, baseline: "middle" });
   return w;
+}
+
+// Shorten a string with an ellipsis until it fits — names come from the user
+// and the coach, and a card has no room for a second line.
+function fit(ctx, str, font, maxW) {
+  ctx.font = font;
+  let s = String(str);
+  if (ctx.measureText(s).width <= maxW) return s;
+  while (s.length > 1 && ctx.measureText(`${s}\u2026`).width > maxW) s = s.slice(0, -1);
+  return `${s.trimEnd()}\u2026`;
+}
+
+// The same for a tracked-out small-caps label, which label() spaces by hand.
+function fitLabel(ctx, str, size, maxW) {
+  const width = (t) => {
+    ctx.font = `800 ${size}px ${BODY}`;
+    const chars = [...t.toUpperCase()];
+    return chars.reduce((w, c) => w + ctx.measureText(c).width, 0) + size * 0.18 * Math.max(0, chars.length - 1);
+  };
+  let s = String(str);
+  if (width(s) <= maxW) return s;
+  while (s.length > 1 && width(`${s}\u2026`) > maxW) s = s.slice(0, -1);
+  return `${s.trimEnd()}\u2026`;
+}
+
+// --- the muscle map ----------------------------------------------------------
+
+// The in-app muscle map, painted: the same shapes BodyMap draws as SVG
+// (bodyShapes.js), so the card shows exactly what the app showed.
+const MAP_RATIO = (FIGURE_W * 2 + FIGURE_GAP) / FIGURE_H;
+
+function bodyShape(ctx, s) {
+  ctx.save();
+  if (s.rot) {
+    const [a, px, py] = s.rot;
+    ctx.translate(px, py);
+    ctx.rotate((a * Math.PI) / 180);
+    ctx.translate(-px, -py);
+  }
+  if (s.t === "ellipse") { ctx.beginPath(); ctx.ellipse(s.cx, s.cy, s.rx, s.ry, 0, 0, Math.PI * 2); ctx.fill(); }
+  else if (s.t === "rect") { rr(ctx, s.x, s.y, s.w, s.h, s.r || 0); ctx.fill(); }
+  else ctx.fill(new Path2D(s.d));
+  ctx.restore();
+}
+
+// Front and back figures, `h` tall, from (x, y); returns the width used.
+function drawBodyMap(ctx, muscles, x, y, h) {
+  const primary = new Set(muscles.primary || []);
+  const secondary = new Set(muscles.secondary || []);
+  const k = h / FIGURE_H;
+  const half = (view) => {
+    ctx.fillStyle = C.surface2;
+    LIMBS.forEach((s) => bodyShape(ctx, s));
+    for (const [m, list] of Object.entries(view)) {
+      const lit = primary.has(m);
+      ctx.fillStyle = lit ? C.accent : secondary.has(m) ? tint(C.accent, 0.42) : C.surface3;
+      ctx.shadowColor = lit ? tint(C.accent, 0.6) : "transparent";
+      ctx.shadowBlur = lit ? 8 : 0;
+      list.forEach((s) => bodyShape(ctx, s));
+    }
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+  };
+  [[FRONT, 0], [BACK, FIGURE_W + FIGURE_GAP]].forEach(([view, fx]) => {
+    ctx.save();
+    ctx.translate(x + fx * k, y);
+    ctx.scale(k, k);
+    ctx.fillStyle = C.surface2;
+    SILHOUETTE.forEach((s) => bodyShape(ctx, s));
+    half(view);
+    ctx.translate(FIGURE_W, 0);
+    ctx.scale(-1, 1);
+    half(view);
+    ctx.restore();
+  });
+  return h * MAP_RATIO;
 }
 
 // --- route drawing ---------------------------------------------------------
@@ -394,6 +471,7 @@ function cardTitle(spec) {
   if (spec.kind === "achievement") return "Achievement unlocked";
   if (spec.kind === "progress") return "Training progress";
   if (spec.kind === "goal") return "Race goal";
+  if (spec.kind === "gym") return "Workout complete";
   return "Run complete";
 }
 
@@ -401,11 +479,11 @@ function cardTitle(spec) {
 
 /**
  * spec = {
- *   kind: "run" | "progress" | "achievement" | "goal",
+ *   kind: "run" | "gym" | "progress" | "achievement" | "goal",
  *   format: "square" | "story" | "wide",
  *   style: "bold" | "route" | "minimal",
  *   data: {...},                 // shape depends on kind
- *   options: { route, splits, extras, date, note }
+ *   options: { route, splits, extras, date, note, muscles, lifts }
  * }
  */
 export async function renderCard(spec) {
@@ -438,6 +516,7 @@ export async function renderCard(spec) {
 
   const draw = {
     run: drawRunBody,
+    gym: drawGymBody,
     progress: drawProgressBody,
     achievement: drawAchievementBody,
     goal: drawGoalBody,
@@ -637,6 +716,191 @@ function drawRunBody(ctx, g) {
   if (mapBlock && blocks.includes(mapBlock)) {
     const slack = height - measure();
     if (slack > 0) mapBlock.h += Math.min(slack, height * 0.62 - mapBlock.h);
+  }
+
+  let y = top + Math.max(0, (height - measure()) / 2);
+  for (const b of blocks) {
+    if (b.h > 0) b.draw(y, b.h);
+    y += b.h + gapNow;
+  }
+}
+
+// A gym workout: the weight moved is the number, the muscle map the picture,
+// then time, sets and what was lifted. Like the run card, the blocks are
+// measured first and space is conceded in a fixed order — tighten the gap,
+// shrink the story's figure, show fewer exercises, drop the note, shrink the
+// figure beside the number, drop the exercise list — and the new personal
+// bests go last, because they are the brag.
+function drawGymBody(ctx, g) {
+  const { W, pad, top, height, fmt, spec, opts } = g;
+  const d = spec.data;
+  const inner = W - pad * 2;
+  const wide = fmt.id === "wide";
+  const story = fmt.id === "story";
+  const muscles = d.muscles || { primary: [], secondary: [] };
+  const showMap = opts.muscles !== false && (muscles.primary || []).length > 0;
+  const lifts = opts.lifts !== false && Array.isArray(d.lifts) ? d.lifts : [];
+  const bests = Array.isArray(d.bests) ? d.bests : [];
+  const lifted = d.volume > 0;
+  // A bodyweight session moved no measurable weight, so it leads with its sets.
+  const heroVal = lifted ? Math.round(d.volume).toLocaleString() : String(d.sets || 0);
+  const heroUnit = lifted ? "kg lifted" : d.sets === 1 ? "set done" : "sets done";
+  const kicker = [d.title, d.plan].filter(Boolean).join(" \u00b7 ");
+  const cells = [
+    { label: "Time", value: fmtClock(d.durMs || 0), color: C.yellow },
+    ...(lifted ? [{ label: "Sets", value: String(d.sets || 0) }] : []),
+    { label: "Exercises", value: String(d.exercises || 0) },
+    ...(!lifted && d.reps ? [{ label: "Reps", value: String(d.reps) }] : []),
+  ];
+  ctx.font = `700 100px ${DISP}`;
+  const perPx = ctx.measureText(heroVal).width / 100;
+
+  // ---- WIDE: the figure on the left, the figures on the right ----
+  if (wide) {
+    let x = pad;
+    if (showMap) {
+      const mh = height - 14;
+      const mw = mh * MAP_RATIO;
+      panel(ctx, pad, top, mw + 28, height, { r: 18 });
+      drawBodyMap(ctx, muscles, pad + 14, top + 7, mh);
+      x = pad + mw + 28 + 24;
+    }
+    const w = W - pad - x;
+    label(ctx, fitLabel(ctx, kicker, 10, w), x, top + 2, C.accent, 10);
+    const size = Math.min(66, (w - 4) / perPx);
+    ctx.font = `700 ${size}px ${DISP}`;
+    const nw = ctx.measureText(heroVal).width;
+    text(ctx, heroVal, x, top + 20, { font: `700 ${size}px ${DISP}`, color: accentGradient(ctx, x, top + 20, nw, size), baseline: "top" });
+    text(ctx, heroUnit, x, top + 24 + size, { font: `700 15px ${DISP}`, color: C.dim, baseline: "top" });
+    drawStatRow(ctx, cells, x - 14, top + size + 58, w + 14, { size: 22 });
+    return;
+  }
+
+  // ---- SQUARE / STORY ----
+  const gap = story ? 20 : 14;
+  const statH = story ? 32 : 26;
+  const statBoxH = statH + 46;
+  const rowH = story ? 34 : 25;
+  const liftsH = (n) => 34 + n * rowH + 8;
+  const sideMap = showMap && !story; // on a square the figure stands beside the number
+  let sideMapH = sideMap ? 150 : 0;
+  let heroSize = story ? 100 : 72;
+  const heroTextH = () => 20 + heroSize + (story ? 30 : 24);
+  const heroColW = () => inner - (sideMap ? sideMapH * MAP_RATIO + 14 : 0);
+  heroSize = Math.min(heroSize, (heroColW() - 4) / perPx);
+  const heroH = () => Math.max(heroTextH(), sideMapH);
+  let rows = lifts.length;
+
+  const drawHero = (y, h) => {
+    const ty = y + (h - heroTextH()) / 2;
+    const size = story ? 11 : 10;
+    label(ctx, fitLabel(ctx, kicker, size, heroColW()), pad, ty, C.accent, size);
+    ctx.font = `700 ${heroSize}px ${DISP}`;
+    const nw = ctx.measureText(heroVal).width;
+    text(ctx, heroVal, pad, ty + 20, {
+      font: `700 ${heroSize}px ${DISP}`, color: accentGradient(ctx, pad, ty + 20, nw, heroSize), baseline: "top",
+    });
+    text(ctx, heroUnit, pad, ty + 24 + heroSize, { font: `700 ${story ? 19 : 15}px ${DISP}`, color: C.dim, baseline: "top" });
+    if (sideMap) drawBodyMap(ctx, muscles, W - pad - sideMapH * MAP_RATIO, y + (h - sideMapH) / 2, sideMapH);
+  };
+
+  const drawMapBlock = (y, h) => {
+    glow(ctx, W / 2, y + h / 2, h * 0.75, C.accent, 0.1);
+    const mh = h - 18;
+    const k = mh / FIGURE_H;
+    const left = W / 2 - (mh * MAP_RATIO) / 2;
+    drawBodyMap(ctx, muscles, left, y, mh);
+    label(ctx, "Front", left + (FIGURE_W / 2) * k, y + h - 9, C.dim2, 8.5, "center");
+    label(ctx, "Back", left + (FIGURE_W * 1.5 + FIGURE_GAP) * k, y + h - 9, C.dim2, 8.5, "center");
+  };
+
+  const drawStats = (y) => {
+    panel(ctx, pad, y, inner, statBoxH, { r: 18, accented: true });
+    drawStatRow(ctx, cells, pad, y + 16, inner, { size: statH });
+  };
+
+  const drawLifts = (y, h) => {
+    panel(ctx, pad, y, inner, h, { r: 18 });
+    label(ctx, "Exercises", pad + 16, y + 14, C.dim, 9.5);
+    const hidden = lifts.length - rows;
+    if (hidden > 0) label(ctx, `+${hidden} more`, W - pad - 16, y + 14, C.dim2, 9.5, "right");
+    const nameFont = `600 ${story ? 15.5 : 13.5}px ${BODY}`;
+    const setFont = `700 ${story ? 14.5 : 12.5}px ${DISP}`;
+    lifts.slice(0, rows).forEach((l, i) => {
+      const ry = y + 34 + i * rowH;
+      if (i > 0) {
+        ctx.strokeStyle = tint("#ffffff", 0.07);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad + 16, ry); ctx.lineTo(W - pad - 16, ry); ctx.stroke();
+      }
+      const sets = fit(ctx, l.text, setFont, inner * 0.5);
+      const sw = ctx.measureText(sets).width;
+      text(ctx, sets, W - pad - 16, ry + rowH / 2, { font: setFont, color: C.dim, align: "right", baseline: "middle" });
+      text(ctx, fit(ctx, l.name, nameFont, inner - 32 - sw - 14), pad + 16, ry + rowH / 2, { font: nameFont, color: C.text, baseline: "middle" });
+    });
+  };
+
+  const drawBests = (y) => {
+    label(ctx, bests.length === 1 ? "New personal best" : "New personal bests", pad, y, C.yellow, 9.5);
+    let cx = pad;
+    for (const b of bests) {
+      const font = `700 12px ${BODY}`;
+      let str = `\u{1F3C6} ${b.name} \u00b7 ${b.label}`;
+      ctx.font = font;
+      if (ctx.measureText(str).width + 28 > W - pad - cx) {
+        if (cx > pad) break;
+        str = fit(ctx, str, font, W - pad - cx - 28);
+      }
+      const w = ctx.measureText(str).width + 28;
+      chip(ctx, str, cx, y + 18, { h: 28, pad: 14, size: 12, color: C.text, bg: tint(C.yellow, 0.12), border: tint(C.yellow, 0.35) });
+      cx += w + 7;
+    }
+  };
+
+  const noteFont = `italic 600 ${story ? 15 : 13}px ${BODY}`;
+  const drawNote = (y) => text(ctx, fit(ctx, `\u201C${d.note}\u201D`, noteFont, inner), pad, y, { font: noteFont, color: C.dim, baseline: "top" });
+
+  const blocks = [{ key: "hero", h: heroH(), draw: drawHero }];
+  if (showMap && story) blocks.push({ key: "map", h: 300, draw: drawMapBlock });
+  blocks.push({ key: "stats", h: statBoxH, draw: drawStats });
+  if (rows) blocks.push({ key: "lifts", h: liftsH(rows), draw: drawLifts });
+  if (bests.length) blocks.push({ key: "bests", h: 46, draw: drawBests });
+  if (d.note) blocks.push({ key: "note", h: story ? 22 : 18, draw: drawNote });
+
+  let gapNow = gap;
+  const block = (key) => blocks.find((b) => b.key === key);
+  const measure = () => blocks.reduce((sum, b) => sum + b.h, 0) + gapNow * Math.max(0, blocks.length - 1);
+  const shrink = (key, min) => {
+    const b = block(key);
+    const over = measure() - height;
+    if (b && over > 0) b.h -= Math.max(0, Math.min(over, b.h - min));
+  };
+  const drop = (key) => {
+    const i = blocks.findIndex((b) => b.key === key);
+    if (i >= 0 && measure() > height) { blocks.splice(i, 1); if (key === "lifts") rows = 0; }
+  };
+  const setRows = (n) => { rows = n; const b = block("lifts"); if (b) b.h = liftsH(n); };
+
+  if (measure() > height) gapNow = story ? 14 : 10;
+  shrink("map", 240);
+  while (measure() > height && rows > 4) setRows(rows - 1);
+  shrink("map", 170);
+  while (measure() > height && rows > 3) setRows(rows - 1);
+  drop("note");
+  while (measure() > height && rows > 2) setRows(rows - 1);
+  if (measure() > height && sideMap) {
+    const over = measure() - height;
+    const give = Math.min(over, sideMapH - Math.max(heroTextH(), 104));
+    if (give > 0) { sideMapH -= give; block("hero").h = heroH(); }
+  }
+  drop("lifts");
+  drop("bests");
+
+  // Room to spare goes to the story's figure (up to a point), then to centring.
+  const mapBlock = block("map");
+  if (mapBlock) {
+    const slack = height - measure();
+    if (slack > 0) mapBlock.h += Math.min(slack, 380 - mapBlock.h);
   }
 
   let y = top + Math.max(0, (height - measure()) / 2);
@@ -881,6 +1145,13 @@ export function cardText(spec) {
     if (d.elev > 0) bits.push(`+${d.elev} m`);
     if (d.kcal > 0) bits.push(`${d.kcal} kcal`);
     return `${bits.join(" · ")}\nTracked with Stride`;
+  }
+  if (spec.kind === "gym") {
+    const head = d.volume > 0 ? `${Math.round(d.volume).toLocaleString()} kg lifted` : `${d.sets} set${d.sets === 1 ? "" : "s"}`;
+    const lines = [`🏋️ ${d.title}: ${head} in ${fmtClock(d.durMs || 0)}`];
+    if (Array.isArray(d.bests) && d.bests.length) lines.push(`New best: ${d.bests.map((b) => `${b.name} ${b.label}`).join(", ")}`);
+    lines.push("Trained with Stride");
+    return lines.join("\n");
   }
   if (spec.kind === "progress") {
     return `🏃 ${d.km.toFixed(1)} km logged over ${d.runs} run${d.runs === 1 ? "" : "s"} — ${d.done}/${d.total} sessions done (${Math.round(d.pct)}%).${d.streak ? ` ${d.streak}-day streak.` : ""}\nTracked with Stride`;

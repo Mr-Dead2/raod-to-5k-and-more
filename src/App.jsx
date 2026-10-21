@@ -18,11 +18,12 @@ import { RunTracker } from "./components/RunTracker.jsx";
 import { NotifDiagnostics } from "./components/NotifDiagnostics.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { GymTab } from "./components/GymTab.jsx";
+import { GymSessionCard } from "./components/GymParts.jsx";
 import { WorkoutPlayer } from "./components/WorkoutPlayer.jsx";
 import { useGym } from "./useGym.js";
-import { gymSummary, nextWorkout, planSessions, buildDraft, sessionVolume } from "./gym.js";
+import { gymSummary, nextWorkout, planSessions, buildDraft, sessionVolume, workoutCard, workoutForCoach } from "./gym.js";
 import { ACHIEVEMENTS, unlockedIds } from "./achievements.js";
-import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
+import { buildSummary, streamCoach, generatePlanBlock, adaptPlanBlock, coachRun, coachWorkout, validateKey, ANALYSE_PROMPT, quickAsks, MODELS, DEFAULT_MODEL, DEFAULT_GOAL } from "./coach.js";
 import { haptic, confetti } from "./celebrate.js";
 import {
   notificationsSupported, permissionState, loadReminder, saveReminder,
@@ -685,6 +686,28 @@ export default function App() {
     }
   };
 
+  // The same for one gym workout. Answers share runFeedback (session ids never
+  // collide with plan-day keys), so the Gym log and History show one reply.
+  const coachThisWorkout = async (s) => {
+    if (runFeedbackBusy) return;
+    if (!coachKey.trim()) { needCoachKey(); return; }
+    haptic(8);
+    setRunFeedbackBusy(s.id);
+    try {
+      const text = await coachWorkout({
+        apiKey: coachKey.trim(), model: coachModel.trim() || DEFAULT_MODEL, summary: coachSummary(),
+        workout: workoutForCoach(s, gym.bestsBySession.get(s.id) || []),
+      });
+      setRunFeedback((m) => ({ ...m, [s.id]: text }));
+      haptic([10, 20, 10]);
+    } catch (e) {
+      setRunFeedback((m) => ({ ...m, [s.id]: `⚠️ ${e.message || "Couldn't reach the coach."}` }));
+      haptic(8);
+    } finally {
+      setRunFeedbackBusy(null);
+    }
+  };
+
   const importRef = useRef(null);
   const exportData = async () => {
     haptic(8);
@@ -762,6 +785,14 @@ export default function App() {
       hrAvg: item.e.hrAvg, cadence: item.e.cadence,
       note: item.e.note, date: item.e.date,
     },
+  });
+
+  // A gym workout's card. A workout still on the finish screen isn't in the
+  // log yet, so the player hands its new bests in; a logged one has them.
+  const shareWorkout = (s, bests) => openShare({
+    kind: "gym",
+    footer: "Trained with Stride",
+    data: workoutCard(s, bests || gym.bestsBySession.get(s.id) || []),
   });
 
   const progressShareSpec = () => ({
@@ -1069,7 +1100,9 @@ export default function App() {
           <GymTab gym={gym} eyebrow={todayLabel} trailing={appControls(36)} coach={gymCoach()}
             onStartWorkout={startWorkout} onResume={() => setWorkoutOpen(true)}
             onDiscardActive={() => { gym.setActive(null); haptic(10); setToast({ icon: "🗑️", title: "Workout discarded", label: "GYM" }); }}
-            onAskCoach={askCoachFrom} onNeedKey={needCoachKey} setToast={setToast} />
+            onAskCoach={askCoachFrom} onNeedKey={needCoachKey} setToast={setToast}
+            onShareWorkout={(s) => shareWorkout(s)} onCoachWorkout={coachThisWorkout}
+            workoutFeedback={runFeedback} feedbackBusy={runFeedbackBusy} />
         )}
 
         {tab === "stats" && (
@@ -1758,32 +1791,52 @@ export default function App() {
           // "Runs" has to mean runs: a walk the watch logged by itself has a
           // distance, so filtering on distance alone let it back in.
           const anyWalks = history.some((h) => h.e.activity === "walk");
-          const shown = history.filter((h) =>
-            histFilter === "gps" ? h.e.tracked
-              : histFilter === "run" ? isRun(h.e) && parseFloat(h.e.km) > 0
-                : histFilter === "walk" ? h.e.activity === "walk"
+          const anyGym = gym.log.length > 0;
+          // A filter whose segment has gone (the last walk or workout deleted)
+          // falls back to All rather than showing an empty list under "All".
+          const filter = (histFilter === "walk" && !anyWalks) || (histFilter === "gym" && !anyGym) ? "all" : histFilter;
+          const runs = filter === "gym" ? [] : history.filter((h) =>
+            filter === "gps" ? h.e.tracked
+              : filter === "run" ? isRun(h.e) && parseFloat(h.e.km) > 0
+                : filter === "walk" ? h.e.activity === "walk"
                   : true);
-          const shownKm = shown.reduce((s, h) => s + (parseFloat(h.e.km) || 0), 0);
-          const shownMin = shown.reduce((s, h) => s + (parseFloat(h.e.min) || 0), 0);
+          // Gym workouts share the timeline, newest first. They have no
+          // distance, so the subtitle's kilometres count runs only.
+          const lifts = filter === "all" || filter === "gym" ? gym.log : [];
+          const shown = [
+            ...runs.map((h) => ({ h, date: h.e.date || "" })),
+            ...lifts.map((s) => ({ s, date: s.date || "" })),
+          ].sort((a, b) => b.date.localeCompare(a.date));
+          const shownKm = runs.reduce((s, h) => s + (parseFloat(h.e.km) || 0), 0);
+          const shownMin = runs.reduce((s, h) => s + (parseFloat(h.e.min) || 0), 0)
+            + lifts.reduce((t, s) => t + (s.durMs || 0) / 60000, 0);
+          const anything = history.length + gym.log.length > 0;
           return (
           <div className="rise">
             <Screen eyebrow={todayLabel} title="History"
-              sub={history.length ? `${shown.length} session${shown.length === 1 ? "" : "s"} · ${shownKm.toFixed(1)} km${shownMin ? ` · ${fmtMin(shownMin)}` : ""}` : "Every session you tick off lands here"}
+              sub={anything
+                ? [`${shown.length} session${shown.length === 1 ? "" : "s"}`, runs.length ? `${shownKm.toFixed(1)} km` : null, shownMin ? fmtMin(shownMin) : null].filter(Boolean).join(" · ")
+                : "Every session you tick off lands here"}
               trailing={appControls(36)} />
 
-            {history.length > 0 && (
+            {anything && (
               <Segmented
-                items={[{ id: "all", label: "All" }, { id: "run", label: "Runs" }, ...(anyWalks ? [{ id: "walk", label: "Walks" }] : []), { id: "gps", label: "GPS" }]}
-                value={histFilter} onChange={setHistFilter} style={{ marginBottom: 16 }} />
+                items={[
+                  { id: "all", label: "All" }, { id: "run", label: "Runs" },
+                  ...(anyWalks ? [{ id: "walk", label: "Walks" }] : []),
+                  ...(anyGym ? [{ id: "gym", label: "Gym" }] : []),
+                  { id: "gps", label: "GPS" },
+                ]}
+                value={filter} onChange={setHistFilter} style={{ marginBottom: 16 }} />
             )}
 
-            {history.length === 0 ? (
+            {!anything ? (
               <Card style={{ textAlign: "center", padding: "34px 20px" }}>
                 <span style={{ width: 64, height: 64, borderRadius: "50%", background: tint(C.accent, 0.14), color: C.accent, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                   <Icon name="run" size={32} weight={2.1} />
                 </span>
-                <div className="t-title3" style={{ marginTop: 14 }}>No runs logged yet</div>
-                <div className="t-sub" style={{ color: C.dim, marginTop: 6 }}>Track a run with GPS, or tick off a day on the Plan tab, and it'll show up here.</div>
+                <div className="t-title3" style={{ marginTop: 14 }}>Nothing logged yet</div>
+                <div className="t-sub" style={{ color: C.dim, marginTop: 6 }}>Track a run with GPS, tick off a day on the Plan tab or finish a gym workout, and it'll show up here.</div>
                 <button onClick={() => { haptic(12); setTrackerOpen(true); }} className="cta tap"
                   style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, borderRadius: 999, padding: "13px 24px", fontSize: 17 }}>
                   <Icon name="play" size={16} /> Track your first run
@@ -1795,7 +1848,17 @@ export default function App() {
               </Card>
             ) : (
               <div style={{ display: "grid", gap: 14 }}>
-                {shown.map((h, idx) => {
+                {shown.map((item, idx) => {
+                  if (item.s) {
+                    return (
+                      <GymSessionCard key={item.s.id} s={item.s} idx={idx} tagged
+                        bests={gym.bestsBySession.get(item.s.id) || []}
+                        onShare={() => shareWorkout(item.s)}
+                        onCoach={() => coachThisWorkout(item.s)} coachBusy={runFeedbackBusy === item.s.id}
+                        feedback={runFeedback[item.s.id]} />
+                    );
+                  }
+                  const h = item.h;
                   const pSec = paceSec(h.e.min, h.e.km);
                   const km = parseFloat(h.e.km) || 0;
                   const walk = h.e.activity === "walk";
@@ -2296,7 +2359,7 @@ export default function App() {
           </div>
         )}>
           <WorkoutPlayer draft={gym.active} sessions={gym.log} coach={gymCoach()}
-            onSave={saveWorkout}
+            onSave={saveWorkout} onShare={shareWorkout}
             onDiscard={() => { gym.setActive(null); setWorkoutOpen(false); haptic(10); setToast({ icon: "🗑️", title: "Workout discarded", label: "GYM" }); }}
             onMinimize={(d) => { gym.setActive(d); setWorkoutOpen(false); haptic(6); }} />
         </ErrorBoundary>

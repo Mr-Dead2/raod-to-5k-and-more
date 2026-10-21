@@ -178,9 +178,12 @@ front — the other headline reason to go native.
   progress" takes **two taps** (arm, then confirm within 3.5 s) — it is the one
   irreversible action on the screen. The Stats overview leads with Activity-style
   rings (sessions, this week's km, race readiness) under the total distance.
-  History filters with a segmented control (all / runs / walks / GPS), totals in
-  the subtitle, and each run is a Fitness workout card: route map, big distance
-  and a two-column `MetricGrid` in the metric colours.
+  History filters with a segmented control (all / runs / walks / gym / GPS, the
+  walk and gym segments only when there are any), totals in the subtitle, and
+  each run is a Fitness workout card: route map, big distance and a two-column
+  `MetricGrid` in the metric colours. Gym workouts share the timeline, sorted by
+  date with the runs, as `GymSessionCard`s; they have no distance, so the
+  subtitle's kilometres count runs only.
 - **Persistence is split by access pattern.** Run progress → `localStorage`
   (`src/storage.js`, key `run5k:v2`). Reminder settings → **IndexedDB**
   (`src/idb.js`, a tiny dependency-free KV store) because the service worker
@@ -386,7 +389,16 @@ front — the other headline reason to go native.
   Escape closes only the top one; `children`/`footer` may be functions of
   `{ dismiss }` so an action can leave with the exit animation).
   `BodyMap.jsx` draws the stylised front/back figure from left-half shapes
-  mirrored, main muscles in the accent and helpers in a wash of it.
+  mirrored, main muscles in the accent and helpers in a wash of it; the shapes
+  are plain data in `src/bodyShapes.js` so the share card paints the identical
+  figure on its canvas. A logged workout renders as `GymSessionCard`
+  (`GymParts.jsx`) in both the Gym log and History, with only the actions the
+  caller passes (share, coach, and in the log a two-tap delete in its header).
+  "Coach this workout" lives in App (`coachThisWorkout`, `workoutForCoach`) and
+  keeps its answers in `runFeedback` by session id — ids never collide with
+  plan-day keys — so the log and History show the same reply. Each session's
+  new bests are computed once, oldest first, as `gym.bestsBySession`
+  (`newBestsBySession`), for the cards, the share card and the coach.
 - **Race goals (`src/goals.js`).** The target that replaced "get to 5K". `RACES`
   is the catalogue (1K/5K/10K/half/marathon); `riegel()` converts a known
   performance to an equivalent finish time at another distance (T2 = T1 ×
@@ -608,10 +620,15 @@ front — the other headline reason to go native.
 - **Share cards (`src/share.js` + `src/components/ShareSheet.jsx`).** Anything
   worth bragging about becomes an image. A card is described as a `spec`
   — `{ kind, data, format, style, options }` — and `renderCard(spec)` draws it on
-  a canvas at 2× (`square` 1080×1080, `story` 1080×1920, `wide` 1280×670). Four
+  a canvas at 2× (`square` 1080×1080, `story` 1080×1920, `wide` 1280×670). Five
   `kind`s: `run` (route, hero distance, time/pace/kcal, a per-km splits chart,
-  metric chips, note), `progress` (completion ring, totals, weekly bars),
-  `achievement` (badge) and `goal` (predicted finish + readiness). Runs also have
+  metric chips, note), `gym` (`workoutCard()`: the weight lifted as the hero —
+  sets, for a bodyweight session — the muscle map beside it on a square and
+  large on a story, time/sets/exercises, the exercise list with "+N more", new
+  personal bests and the note; its concession order ends by dropping the
+  exercise list and only then the bests, because they are the brag),
+  `progress` (completion ring, totals, weekly bars), `achievement` (badge) and
+  `goal` (predicted finish + readiness). Runs also have
   three `style`s — `bold`, `route` (map-forward) and `minimal`. Everything reads
   the live `C` tokens, so a card always matches the user's accent.
   **The body renderers measure before they draw.** Blocks are built with their
@@ -625,15 +642,17 @@ front — the other headline reason to go native.
   `ShareSheet` is the picker: it renders the **real card** as the preview (same
   `renderCard` output that gets shared, generation-guarded so a fast tap through
   the formats can't let a slow earlier render overwrite a newer one), offers the
-  format/style chips plus content toggles (route / splits / extras / date), and
+  format/style chips plus content toggles (route / splits / extras / date for a
+  run; muscles / exercises / date for a workout), and
   four actions — Share (native share sheet via `@capacitor/share` + Filesystem
   natively, `navigator.share` with a File on the web, download as the fallback),
   Save, Copy image (`ClipboardItem`, unsupported in some browsers) and Copy text
   (`cardText(spec)`, the plain-text form of every card). A cancelled share sheet
   is a normal outcome, not an error. Entry points: the app bar and every screen
-  header (progress card), History per run, RunTracker's finish screen (via its
-  `onShare` prop — the tracker hands the run up rather than firing a card blind),
-  the Awards grid and the Goal segment. The sheet is presented as an iOS sheet on
+  header (progress card), History per run and per workout, the Gym log,
+  RunTracker's and the workout player's finish screens (via their `onShare`
+  props — they hand the session up rather than firing a card blind; a workout
+  not yet saved passes its own new bests), the Awards grid and the Goal segment. The sheet is presented as an iOS sheet on
   `spring.js`: it rises critically damped and always leaves downward (close
   button, Escape, scrim tap, a successful share); its grabber + header are a drag
   handle that tracks 1:1, resists being pulled above home, and on release
